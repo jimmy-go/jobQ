@@ -1,9 +1,7 @@
 package jobq
 
-import "log"
-
 // Job type for job.
-type Job func(int, chan error)
+type Job func(chan error)
 
 // Worker worker executing jobs work.
 type Worker struct {
@@ -39,8 +37,7 @@ func (w *Worker) Run() {
 
 			select {
 			case job := <-w.JobChannel:
-				log.Printf("Run : Worker ID [%v]", w.ID)
-				job(len(w.DQ), w.Errc)
+				job(w.Errc)
 			case <-w.done:
 				// TODO, return worker queue to dispatcher job queue.
 				return
