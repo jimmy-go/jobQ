@@ -1,7 +1,7 @@
 package jobq
 
 // Job type for job.
-type Job func(chan error)
+type Job func() error
 
 // Worker worker executing jobs work.
 type Worker struct {
@@ -37,7 +37,9 @@ func (w *Worker) Run() {
 
 			select {
 			case job := <-w.JobChannel:
-				job(w.Errc)
+				go func() {
+					w.Errc <- job()
+				}()
 			case <-w.done:
 				// TODO, return worker queue to dispatcher job queue.
 				return
