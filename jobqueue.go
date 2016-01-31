@@ -37,9 +37,9 @@ func (w *Worker) Run() {
 
 			select {
 			case job := <-w.JobChannel:
-				go func() {
-					w.Errc <- job()
-				}()
+				select {
+				case w.Errc <- job():
+				}
 			case <-w.done:
 				// TODO, return worker queue to dispatcher job queue.
 				return
@@ -50,9 +50,10 @@ func (w *Worker) Run() {
 
 // Stop signals the worker to stop listening for work requests.
 func (w *Worker) Stop() {
-	go func() {
-		w.done <- struct{}{}
-	}()
+	select {
+	case w.done <- struct{}{}:
+	default:
+	}
 }
 
 // Dispatcher manage job queue between workers.
@@ -91,13 +92,21 @@ func (d *Dispatcher) dispatch() {
 	for {
 		select {
 		case job := <-d.Queue:
-			go func(job Job) {
-				// take a worker channel.
-				jobChannel := <-d.WorkerPool
+			select {
+			case jobc := <-d.WorkerPool:
+				select {
+				case jobc <- job:
+				}
+			}
+			/*
+				go func(job Job) {
+					// take a worker channel.
+					jobChannel := <-d.WorkerPool
 
-				// dispatch the job to the worker job channel
-				jobChannel <- job
-			}(job)
+					// dispatch the job to the worker job channel
+					jobChannel <- job
+				}(job)
+			*/
 		}
 	}
 }

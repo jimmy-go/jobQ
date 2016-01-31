@@ -37,6 +37,8 @@ func main() {
 	d.Run()
 
 	for i := 0; i < *tasks; i++ {
+		// generate gorutine for visualization in log, in production never to this,
+		// it will cause a gorutine leak.
 		go func(index int) {
 			// declare some task.
 			q <- func(ii int, e chan error) {
@@ -56,8 +58,7 @@ func main() {
 }
 ```
 
-# To Do
-- [ ] Make To Do list.
+##### To Do
 - [ ] Fix deadlock.
 - [ ] Tests.
 - [x] Examples.
