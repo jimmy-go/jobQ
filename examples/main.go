@@ -11,18 +11,25 @@ import (
 )
 
 var (
-	maxWs = flag.Int("max-workers", 5, "Number of workers.")
-	maxQs = flag.Int("max-queue", 10, "Number of queue works.")
-	tasks = flag.Int("tasks", 200000, "Number of tasks.")
+	ws    = flag.Int("max-workers", 5, "Number of workers.")
+	qlen  = flag.Int("max-queue", 10, "Number of queue works.")
+	tasks = flag.Int("tasks", 100, "Number of tasks.")
 )
 
 func main() {
 	runtime.GOMAXPROCS(runtime.NumCPU())
 	flag.Parse()
 	log.SetFlags(log.Lshortfile)
-	log.Printf("workers [%d]", *maxWs)
-	log.Printf("queue len [%d]", *maxQs)
+	log.Printf("workers [%d]", *ws)
+	log.Printf("queue len [%d]", *qlen)
 	log.Printf("tasks [%d]", *tasks)
+
+	go func() {
+		for {
+			log.Printf("main : GOROUTINES [%v]", runtime.NumGoroutine())
+			time.Sleep(5 * time.Second)
+		}
+	}()
 
 	errc := make(chan error)
 	go func() {
@@ -33,35 +40,25 @@ func main() {
 		}
 	}()
 
-	q := make(chan jobq.Job, *maxQs)
-	d := jobq.NewDispatcher(*maxWs, q, errc)
-	d.Run()
-
-	// declare new session.
-	go func() {
-		select {
-		case <-time.After(20 * time.Second):
-			panic(errors.New("panic to see gorutines"))
-		}
-	}()
+	jq, err := jobq.New(*ws, *qlen, errc)
+	if err != nil {
+		log.Printf("main : err [%s]", err)
+	}
 
 	for i := 0; i < *tasks; i++ {
 		func(index int) {
 			task := func() error {
-				t := time.Duration(time.Now().Second()/10) * 1000 * time.Millisecond
-				log.Printf("main : sleep [%v]", t)
-				time.Sleep(t)
+				time.Sleep(350 * time.Millisecond)
 				log.Printf("main : task [%d] done!", index)
 				return nil
 			}
-			select {
-			case q <- task:
-			}
+			jq.Add(task)
 		}(i)
 	}
 
-	for {
-		log.Println("sleep 1 minute!")
-		time.Sleep(1 * time.Minute)
-	}
+	log.Println("sleep 15 second!")
+	time.Sleep(15 * time.Second)
+	jq.Stop()
+	time.Sleep(15 * time.Second)
+	panic(errors.New("see goroutines"))
 }
