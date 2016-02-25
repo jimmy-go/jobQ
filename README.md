@@ -2,12 +2,12 @@
 
 Simple but powerful job queue in go.
 
-----
-
 [![License MIT](https://img.shields.io/npm/l/express.svg)](http://opensource.org/licenses/MIT)
 [![Build Status](https://travis-ci.org/jimmy-go/jobQ.svg?branch=master)](https://travis-ci.org/jimmy-go/jobQ)
 [![Go Report Card](https://goreportcard.com/badge/github.com/jimmy-go/jobq)](https://goreportcard.com/report/github.com/jimmy-go/jobq)
 [![GoDoc](http://godoc.org/github.com/jimmy-go/jobq?status.png)](http://godoc.org/github.com/jimmy-go/jobq)
+
+----
 
 Example:
 ```go
