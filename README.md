@@ -1,4 +1,6 @@
-####Job Queue in Go
+#### Job Queue in Go
+
+Simple but powerful job queue in go.
 
 ----
 
@@ -6,8 +8,6 @@
 [![Build Status](https://travis-ci.org/jimmy-go/jobQ.svg?branch=master)](https://travis-ci.org/jimmy-go/jobQ)
 [![Go Report Card](https://goreportcard.com/badge/github.com/jimmy-go/jobq)](https://goreportcard.com/report/github.com/jimmy-go/jobq)
 [![GoDoc](http://godoc.org/github.com/jimmy-go/jobq?status.png)](http://godoc.org/github.com/jimmy-go/jobq)
-
-Simple but powerful job queue in go.
 
 Example:
 ```go
