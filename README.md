@@ -1,5 +1,9 @@
 ####Job Queue in Go
 
+----
+
+[![Build Status](https://travis-ci.org/jimmy-go/jobQ.svg?branch=master)](https://travis-ci.org/jimmy-go/jobQ)
+
 Simple but powerful job queue in go.
 
 Example:
