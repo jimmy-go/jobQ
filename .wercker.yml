@@ -28,9 +28,9 @@ build:
 
     # Gets the dependencies
     - script:
-        name: go get
+        name: go get github.com/jimmy-go/jobq
         code: |
-          go get
+          go get github.com/jimmy-go/jobq
 
     # Build the project
     - script:
