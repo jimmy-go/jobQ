@@ -11,8 +11,8 @@ import (
 )
 
 var (
-	ws    = flag.Int("max-workers", 5, "Number of workers.")
-	qlen  = flag.Int("max-queue", 10, "Number of queue works.")
+	ws    = flag.Int("workers", 5, "Number of workers.")
+	qlen  = flag.Int("queue", 10, "Number of queue works.")
 	tasks = flag.Int("tasks", 100, "Number of tasks.")
 )
 
@@ -23,7 +23,10 @@ func main() {
 	log.Printf("workers [%d]", *ws)
 	log.Printf("queue len [%d]", *qlen)
 	log.Printf("tasks [%d]", *tasks)
+	w := 650 * time.Millisecond
+	log.Printf("time for mock task [%v]", w)
 
+	// want to see how many goroutines are running.
 	go func() {
 		for {
 			log.Printf("main : GOROUTINES [%v]", runtime.NumGoroutine())
@@ -31,6 +34,7 @@ func main() {
 		}
 	}()
 
+	// view errors
 	errc := make(chan error)
 	go func() {
 		for err := range errc {
@@ -40,7 +44,11 @@ func main() {
 		}
 	}()
 
-	// we need a new worker pool.
+	// declare a new worker pool
+
+	// ws: workers size count.
+	// qlen: size for queue length. All left jobs will wait until queue release some slot.
+	// errc: channel for errors in execution.
 	jq, err := jobq.New(*ws, *qlen, errc)
 	if err != nil {
 		log.Printf("main : err [%s]", err)
@@ -48,12 +56,17 @@ func main() {
 
 	for i := 0; i < *tasks; i++ {
 		func(index int) {
+			// task satisfies type jobq.Job, can be any function with error return.
+			// I take this aproximation because some worker pool I see around use an interface
+			// what I consider a limiting factor.
+			// this way you only need declare a function and you're ready to go!
+			// [if you think I'm doing it wrong please tell me :)]
 			task := func() error {
-				time.Sleep(350 * time.Millisecond)
+				time.Sleep(w)
 				log.Printf("main : task [%d] done!", index)
 				return nil
 			}
-			// pass the job as a function with error return
+			// send the job to the queue.
 			jq.Add(task)
 		}(i)
 	}
