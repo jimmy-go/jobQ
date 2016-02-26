@@ -7,11 +7,11 @@ go:
   - 1.5
   - tip
 
-# matrix:
-#   allow_failures:
-#     - go: tip
-#     - go: 1.4
-#     - go: 1.5
+# allow failures only on last version of go.
+matrix:
+  allow_failures:
+    - go: 1.5
+    - go: tip
 
 install:
   - go get golang.org/x/tools/cmd/vet
