@@ -42,16 +42,17 @@ func (w *Worker) run() {
 		// w.WorkerPool <- w.JobChannel
 		for {
 			// register the current worker into the worker queue.
-			w.WorkerPool <- w.JobChannel
-
 			select {
-			case job := <-w.JobChannel:
+			case w.WorkerPool <- w.JobChannel:
 				select {
-				case w.Errc <- job():
+				case job := <-w.JobChannel:
+					select {
+					case w.Errc <- job():
+					}
+				case <-w.done:
+					// TODO, return worker queue to dispatcher job queue.
+					return
 				}
-			case <-w.done:
-				// TODO, return worker queue to dispatcher job queue.
-				return
 			}
 		}
 	}()
