@@ -40,6 +40,7 @@ func main() {
 		}
 	}()
 
+	// we need a new worker pool.
 	jq, err := jobq.New(*ws, *qlen, errc)
 	if err != nil {
 		log.Printf("main : err [%s]", err)
@@ -52,6 +53,7 @@ func main() {
 				log.Printf("main : task [%d] done!", index)
 				return nil
 			}
+			// pass the job as a function with error return
 			jq.Add(task)
 		}(i)
 	}
