@@ -14,10 +14,10 @@ func TestNew(t *testing.T) {
 		Expected error
 	}
 	var tests = []T{
-		T{1, 2, nil},
-		T{7, 6, nil},
-		T{1, -1, errInvalidQueueSize},
-		T{-1, 1, errInvalidWorkerSize},
+		{1, 2, nil},
+		{7, 6, nil},
+		{1, -1, errInvalidQueueSize},
+		{-1, 1, errInvalidWorkerSize},
 	}
 	for _, m := range tests {
 		errc := make(chan error, 1)
