@@ -10,8 +10,7 @@ var (
 	errMock = errors.New("mock error")
 )
 
-// TODO; add some tests and benchmark.
-
+// T struct.
 type T struct {
 	Size     int
 	Len      int
@@ -25,6 +24,7 @@ var tests = []T{
 	T{-1, 1, errInvalidWorkerSize},
 }
 
+// TestNew tests invalid inputs.
 func TestNew(t *testing.T) {
 	for _, m := range tests {
 		errc := make(chan error, 1)
@@ -35,6 +35,7 @@ func TestNew(t *testing.T) {
 	}
 }
 
+// TestWork it needs to be proved running.
 func TestWork(t *testing.T) {
 	errc := make(chan error, 1)
 	go func() {
