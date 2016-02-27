@@ -44,7 +44,7 @@ func (d *Dispatcher) run() {
 	// init and run workers.
 	for i := 0; i < d.size; i++ {
 		w := newWorker(i, d.ws, d.done)
-		w.run()
+		go w.run()
 		d.ws <- w
 	}
 	go func() {
@@ -71,9 +71,7 @@ func (d *Dispatcher) run() {
 
 // Add add job to queue channel.
 func (d *Dispatcher) Add(j Job) {
-	select {
-	case d.queue <- j:
-	}
+	d.queue <- j
 }
 
 // Stop stops all workers.
@@ -108,19 +106,17 @@ func newWorker(id int, dc chan *Worker, donec chan struct{}) *Worker {
 // run method runs until Dispatcher.Stop() is called.
 // keeps running jobs.
 func (w *Worker) run() {
-	go func() {
-		for {
+	for {
+		select {
+		case job := <-w.jobc:
+			job()
 			select {
-			case job := <-w.jobc:
-				job()
-				select {
-				case w.dc <- w:
-				}
-			case <-w.done:
-				// TODO; return worker queue to dispatcher job queue.
-				log.Printf("Worker : run : exit worker ID [%v]", w.ID)
-				return
+			case w.dc <- w:
 			}
+		case <-w.done:
+			// TODO; return worker queue to dispatcher job queue.
+			log.Printf("Worker : run : exit worker ID [%v]", w.ID)
+			return
 		}
-	}()
+	}
 }

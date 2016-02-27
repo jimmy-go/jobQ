@@ -50,7 +50,7 @@ func main() {
 	}
 
 	for i := 0; i < *tasks; i++ {
-		func(index int) {
+		go func(index int) {
 			// task satisfies type jobq.Job, can be any function with error return.
 			// I take this aproximation because some worker pool I see around use an interface
 			// what I consider a limiting factor.

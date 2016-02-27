@@ -1,8 +1,8 @@
 package jobq
 
 import (
+	"log"
 	"testing"
-	"time"
 )
 
 // TestNew tests invalid inputs.
@@ -19,22 +19,36 @@ func TestNew(t *testing.T) {
 		{-1, 1, errInvalidWorkerSize},
 	}
 	for _, m := range tests {
-		_, err := New(m.Size, m.Len)
-		if err != m.Expected {
-			t.Fail()
-		}
+		func(mo T) {
+			_, err := New(mo.Size, mo.Len)
+			if err != mo.Expected {
+				t.Fail()
+			}
+		}(m)
 	}
 }
 
 // TestWork it needs to be proved running.
 func TestWork(t *testing.T) {
-	jq, err := New(10, 20)
+	jq, err := New(1, 1)
 	if err != nil {
 		t.Fail()
 	}
-	jq.Add(func() error {
-		return nil
-	})
-	time.Sleep(time.Second)
+	c := make(chan int, 100)
+	go func() {
+		for i := range c {
+			if i > 100 {
+				log.Printf("TestWork : fail i [%v]", i)
+				t.Fail()
+			}
+		}
+	}()
+	for i := 0; i < 100; i++ {
+		jq.Add(func() error {
+			c <- i
+			return nil
+		})
+	}
+	log.Printf("TestWork : end")
 	jq.Stop()
 }
