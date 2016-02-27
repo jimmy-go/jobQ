@@ -1,7 +1,6 @@
 package jobq
 
 import (
-	"errors"
 	"testing"
 	"time"
 )
@@ -20,8 +19,7 @@ func TestNew(t *testing.T) {
 		{-1, 1, errInvalidWorkerSize},
 	}
 	for _, m := range tests {
-		errc := make(chan error, 1)
-		_, err := New(m.Size, m.Len, errc)
+		_, err := New(m.Size, m.Len)
 		if err != m.Expected {
 			t.Fail()
 		}
@@ -30,21 +28,12 @@ func TestNew(t *testing.T) {
 
 // TestWork it needs to be proved running.
 func TestWork(t *testing.T) {
-	errMock := errors.New("mock error")
-	errc := make(chan error, 1)
-	go func() {
-		for err := range errc {
-			if err != errMock {
-				t.Fail()
-			}
-		}
-	}()
-	jq, err := New(10, 20, errc)
+	jq, err := New(10, 20)
 	if err != nil {
 		t.Fail()
 	}
 	jq.Add(func() error {
-		return errMock
+		return nil
 	})
 	time.Sleep(time.Second)
 	jq.Stop()

@@ -17,8 +17,7 @@ Declare a new worker pool:
 ```go
 // ws: workers size count.
 // qlen: size for queue length. All left jobs will wait until queue release some slot.
-// errc: channel for errors in execution.
-jq, err := jobq.New(*ws, *qlen, errc)
+jq, err := jobq.New(*ws, *qlen)
 ```
 
 Add jobs:
@@ -29,13 +28,16 @@ task := func() error {
 }
 // send the job to the queue.
 jq.Add(task)
-
-...
-// stop the pool
-jq.Stop()
 ```
 
-Example:
+Stop the pool:
+
+```go
+jq.Stop()
+
+```
+
+###### Example:
 
 ```go
 package main
@@ -59,27 +61,23 @@ var (
 func main() {
 	runtime.GOMAXPROCS(runtime.NumCPU())
 	flag.Parse()
-	log.SetFlags(log.Lshortfile)
+	log.SetFlags(log.Lshortfile | log.Lmicroseconds)
 	log.Printf("workers [%d]", *ws)
 	log.Printf("queue len [%d]", *qlen)
 	log.Printf("tasks [%d]", *tasks)
 	w := 650 * time.Millisecond
 	log.Printf("time for mock task [%v]", w)
 
+	done := make(chan struct{}, 1)
 	// want to see how many goroutines are running.
 	go func() {
 		for {
-			log.Printf("main : GOROUTINES [%v]", runtime.NumGoroutine())
-			time.Sleep(5 * time.Second)
-		}
-	}()
-
-	// view errors
-	errc := make(chan error)
-	go func() {
-		for err := range errc {
-			if err != nil {
-				log.Printf("main : error channel : err [%s]", err)
+			select {
+			case <-time.After(5 * time.Second):
+				log.Printf("main : GOROUTINES [%v]", runtime.NumGoroutine())
+			case <-done:
+				log.Printf("done!")
+				return
 			}
 		}
 	}()
@@ -88,8 +86,7 @@ func main() {
 
 	// ws: workers size count.
 	// qlen: size for queue length. All left jobs will wait until queue release some slot.
-	// errc: channel for errors in execution.
-	jq, err := jobq.New(*ws, *qlen, errc)
+	jq, err := jobq.New(*ws, *qlen)
 	if err != nil {
 		log.Printf("main : err [%s]", err)
 	}
@@ -114,6 +111,7 @@ func main() {
 	log.Println("sleep 15 second!")
 	time.Sleep(15 * time.Second)
 	jq.Stop()
+	done <- struct{}{}
 	time.Sleep(15 * time.Second)
 	panic(errors.New("see goroutines"))
 }

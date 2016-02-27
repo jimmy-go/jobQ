@@ -1,74 +1,28 @@
 package jobq
 
-import "errors"
+import (
+	"errors"
+	"log"
+)
 
 var (
 	errInvalidWorkerSize = errors.New("invalid worker size")
 	errInvalidQueueSize  = errors.New("invalid queue size")
 )
 
-// Job type for job.
+// Job it's a type with wide application than an interface{Work(id int)}
 type Job func() error
 
-// Worker worker executing jobs work.
-type Worker struct {
-	ID         int
-	WorkerPool chan chan Job
-	JobChannel chan Job
-	// Dispatcher queue channel.
-	DQ   chan Job
-	Errc chan error
-	done chan struct{}
-}
-
-// newWorker returns a new worker.
-func newWorker(id int, workerPool chan chan Job, errc chan error, dq chan Job,
-	donec chan struct{}) *Worker {
-	w := &Worker{
-		ID:         id,
-		WorkerPool: workerPool,
-		JobChannel: make(chan Job),
-		Errc:       errc,
-		DQ:         dq,
-		done:       donec,
-	}
-	return w
-}
-
-// run method starts the run loop for the worker, listening for a quit channel
-// in case we need to stop it
-func (w *Worker) run() {
-	go func() {
-		// w.WorkerPool <- w.JobChannel
-		for {
-			// register the current worker into the worker queue.
-			select {
-			case w.WorkerPool <- w.JobChannel:
-				select {
-				case job := <-w.JobChannel:
-					select {
-					case w.Errc <- job():
-					}
-				case <-w.done:
-					// TODO, return worker queue to dispatcher job queue.
-					return
-				}
-			}
-		}
-	}()
-}
-
-// Dispatcher manage job queue between workers.
+// Dispatcher share jobs between workers available.
 type Dispatcher struct {
-	WorkerPool chan chan Job
-	Queue      chan Job
-	Size       int
-	Errc       chan error
-	done       chan struct{}
+	ws    chan *Worker
+	queue chan Job
+	size  int
+	done  chan struct{}
 }
 
 // New returns a new dispatcher.
-func New(size int, queueLen int, errc chan error) (*Dispatcher, error) {
+func New(size int, queueLen int) (*Dispatcher, error) {
 	if size < 1 {
 		return nil, errInvalidWorkerSize
 	}
@@ -76,52 +30,97 @@ func New(size int, queueLen int, errc chan error) (*Dispatcher, error) {
 		return nil, errInvalidQueueSize
 	}
 	d := &Dispatcher{
-		WorkerPool: make(chan chan Job, size),
-		Queue:      make(chan Job, queueLen),
-		Size:       size,
-		Errc:       errc,
-		done:       make(chan struct{}, 1),
+		ws:    make(chan *Worker, size),
+		queue: make(chan Job, queueLen),
+		size:  size,
+		done:  make(chan struct{}, 1),
 	}
 	d.run()
 	return d, nil
 }
 
-// run inits dispatcher job.
+// run keep dispatching jobs between workers.
 func (d *Dispatcher) run() {
 	// init and run workers.
-	for i := 0; i < d.Size; i++ {
-		w := newWorker(i+1, d.WorkerPool, d.Errc, d.Queue, d.done)
+	for i := 0; i < d.size; i++ {
+		w := newWorker(i, d.ws, d.done)
 		w.run()
+		d.ws <- w
 	}
-	go d.dispatch()
-}
-
-func (d *Dispatcher) dispatch() {
-	for {
-		select {
-		case job := <-d.Queue:
+	go func() {
+		for {
 			select {
-			case jobc := <-d.WorkerPool:
+			case job := <-d.queue:
+				// log.Printf("Dispatcher : run : job := <- d.queue. Size [%v]", d.size)
+
 				select {
-				case jobc <- job:
+				case wc := <-d.ws:
+					// log.Printf("Dispatcher : run : wc := <-d.ws. Size [%v]", d.size)
+					select {
+					case wc.jobc <- job:
+						// log.Printf("Dispatcher : run : wc.jobc <- job. Size [%v]", d.size)
+					}
 				}
+			case <-d.done:
+				// log.Printf("Dispatcher : run : <-d.done. Size [%v]", d.size)
+				return
 			}
 		}
-	}
+	}()
 }
 
-// Add adds a task for the job queue.
+// Add add job to queue channel.
 func (d *Dispatcher) Add(j Job) {
 	select {
-	case d.Queue <- j:
+	case d.queue <- j:
 	}
 }
 
-// Stop stops all works and return all go routines.
+// Stop stops all workers.
 func (d *Dispatcher) Stop() {
-	for i := 0; i < d.Size; i++ {
+	for i := 0; i < d.size+1; i++ {
 		select {
 		case d.done <- struct{}{}:
 		}
 	}
+}
+
+// Worker struct implements own job channel and notifies owner dispatcher when is
+// available for work.
+type Worker struct {
+	ID   int
+	dc   chan *Worker
+	jobc chan Job
+	done chan struct{}
+}
+
+// newWorker returns a new worker.
+func newWorker(id int, dc chan *Worker, donec chan struct{}) *Worker {
+	w := &Worker{
+		ID:   id,
+		dc:   dc,
+		jobc: make(chan Job),
+		done: donec,
+	}
+	return w
+}
+
+// run method runs until Dispatcher.Stop() is called.
+// keeps running jobs.
+func (w *Worker) run() {
+	go func() {
+		for {
+			select {
+			case job := <-w.jobc:
+				job()
+				select {
+				case w.dc <- w:
+				}
+			case <-w.done:
+				// TODO; return worker queue to dispatcher job queue.
+				log.Printf("Worker : run : exit worker ID [%v]", w.ID)
+				return
+			}
+		}
+	}()
 }
