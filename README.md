@@ -117,6 +117,19 @@ func main() {
 }
 ```
 
+Benchmark:
+
+```
+Benchmark100x100-4  	   10000	    122320 ns/op
+Benchmark10x100-4   	   10000	   1131420 ns/op
+Benchmark1x1-4      	     100	  11379068 ns/op
+Benchmark1x2-4      	     100	  11023856 ns/op
+Benchmark1x3-4      	     100	  10712324 ns/op
+Benchmark1000x1000-4	   50000	     35176 ns/op
+Benchmark10x30-4    	    2000	   1145672 ns/op
+Benchmark1x100-4    	   10000	  11455667 ns/op
+```
+
 LICENSE:
 
 >The MIT License (MIT)

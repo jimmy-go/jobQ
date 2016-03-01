@@ -1,9 +1,6 @@
 package jobq
 
-import (
-	"errors"
-	"log"
-)
+import "errors"
 
 var (
 	errInvalidWorkerSize = errors.New("invalid worker size")
@@ -115,7 +112,7 @@ func (w *Worker) run() {
 			}
 		case <-w.done:
 			// TODO; return worker queue to dispatcher job queue.
-			log.Printf("Worker : run : exit worker ID [%v]", w.ID)
+			// log.Printf("Worker : run : exit worker ID [%v]", w.ID)
 			return
 		}
 	}

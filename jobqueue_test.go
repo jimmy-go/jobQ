@@ -3,6 +3,7 @@ package jobq
 import (
 	"log"
 	"testing"
+	"time"
 )
 
 // TestNew tests invalid inputs.
@@ -34,7 +35,7 @@ func TestWork(t *testing.T) {
 	if err != nil {
 		t.Fail()
 	}
-	c := make(chan int, 100)
+	c := make(chan int)
 	go func() {
 		for i := range c {
 			if i > 100 {
@@ -44,11 +45,40 @@ func TestWork(t *testing.T) {
 		}
 	}()
 	for i := 0; i < 100; i++ {
+		// change m with i and see a racecondition.
+		m := i
 		jq.Add(func() error {
-			c <- i
+			select {
+			case c <- m:
+			}
 			return nil
 		})
 	}
-	log.Printf("TestWork : end")
 	jq.Stop()
 }
+
+func bench(workers, queue int, b *testing.B) {
+	jq, err := New(workers, queue)
+	if err != nil {
+		panic(err)
+	}
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			task := func() error {
+				<-time.After(10 * time.Millisecond)
+				return nil
+			}
+			jq.Add(task)
+		}
+	})
+	jq.Stop()
+}
+
+func Benchmark100x100(b *testing.B)   { bench(100, 100, b) }
+func Benchmark10x100(b *testing.B)    { bench(10, 100, b) }
+func Benchmark1x1(b *testing.B)       { bench(1, 1, b) }
+func Benchmark1x2(b *testing.B)       { bench(1, 2, b) }
+func Benchmark1x3(b *testing.B)       { bench(1, 3, b) }
+func Benchmark1000x1000(b *testing.B) { bench(1000, 1000, b) }
+func Benchmark10x30(b *testing.B)     { bench(10, 30, b) }
+func Benchmark1x100(b *testing.B)     { bench(1, 100, b) }
