@@ -13,18 +13,10 @@ matrix:
   allow_failures:
     - go: tip
 
-# broken block
-
-# install:
-#   - go get golang.org/x/tools/cmd/vet
-#   - go get github.com/mattn/goveralls
-#   - go get golang.org/x/tools/cmd/cover
-#   - go get github.com/golang/lint/golint
-#   - go get github.com/pierrre/gotestcover
-#   - go get -t ./...
-
-# script:
-#   - go vet -x .
-#   - golint .
-#   - gotestcover -coverprofile="cover.out" -race -covermode="count" .
-#   - goveralls -coverprofile="cover.out"
+before_install:
+  - go get github.com/axw/gocov/gocov
+  - go get github.com/mattn/goveralls
+  - if ! go get github.com/golang/tools/cmd/cover; then go get golang.org/x/tools/cmd/cover; fi
+  
+script:
+  - $HOME/gopath/bin/goveralls -service=travis-ci

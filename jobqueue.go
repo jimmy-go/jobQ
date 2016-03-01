@@ -48,18 +48,13 @@ func (d *Dispatcher) run() {
 		for {
 			select {
 			case job := <-d.queue:
-				// log.Printf("Dispatcher : run : job := <- d.queue. Size [%v]", d.size)
-
 				select {
 				case wc := <-d.ws:
-					// log.Printf("Dispatcher : run : wc := <-d.ws. Size [%v]", d.size)
 					select {
 					case wc.jobc <- job:
-						// log.Printf("Dispatcher : run : wc.jobc <- job. Size [%v]", d.size)
 					}
 				}
 			case <-d.done:
-				// log.Printf("Dispatcher : run : <-d.done. Size [%v]", d.size)
 				return
 			}
 		}
@@ -111,8 +106,6 @@ func (w *Worker) run() {
 			case w.dc <- w:
 			}
 		case <-w.done:
-			// TODO; return worker queue to dispatcher job queue.
-			// log.Printf("Worker : run : exit worker ID [%v]", w.ID)
 			return
 		}
 	}
