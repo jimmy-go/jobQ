@@ -68,10 +68,9 @@ func (d *Dispatcher) Add(j Job) {
 
 // Stop stops all workers.
 func (d *Dispatcher) Stop() {
-	for i := 0; i < d.size+1; i++ {
-		select {
-		case d.done <- struct{}{}:
-		}
+	// +2: we need to stop Dispatcher too.
+	for i := 0; i < d.size+2; i++ {
+		d.done <- struct{}{}
 	}
 }
 
