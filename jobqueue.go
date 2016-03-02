@@ -7,10 +7,14 @@ var (
 	errInvalidQueueSize  = errors.New("invalid queue size")
 )
 
-// Job it's a type with wide application than an interface{Work(id int)}
+// Job func. Can be any function with no input vars that returns error:
+// task := func() error {
+// 		do some work.....
+//		return err
+// }
 type Job func() error
 
-// Dispatcher share jobs between workers available.
+// Dispatcher share jobs between available workers.
 type Dispatcher struct {
 	ws    chan *Worker
 	queue chan Job
@@ -19,6 +23,8 @@ type Dispatcher struct {
 }
 
 // New returns a new dispatcher.
+// size: how many workers would init.
+// queueLen: how many jobs would put in queue.
 func New(size int, queueLen int) (*Dispatcher, error) {
 	if size < 1 {
 		return nil, errInvalidWorkerSize
@@ -55,6 +61,12 @@ func (d *Dispatcher) run() {
 					}
 				}
 			case <-d.done:
+				for i := 0; i < d.size; i++ {
+					select {
+					case w := <-d.ws:
+						w.stop()
+					}
+				}
 				return
 			}
 		}
@@ -62,21 +74,14 @@ func (d *Dispatcher) run() {
 }
 
 // Add add job to queue channel.
+// Job type func() error
 func (d *Dispatcher) Add(j Job) {
 	d.queue <- j
 }
 
 // Stop stops all workers.
 func (d *Dispatcher) Stop() {
-	select {
-	case d.done <- struct{}{}:
-	}
-	for i := 0; i < d.size; i++ {
-		select {
-		case w := <-d.ws:
-			w.stop()
-		}
-	}
+	d.done <- struct{}{}
 }
 
 // Worker struct implements own job channel and notifies owner dispatcher when is
