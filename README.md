@@ -26,7 +26,7 @@ Add jobs:
 task := func() error {
     // do stuff...
 }
-// send the job to the queue.
+// Send the job to the queue.
 jq.Add(task)
 ```
 
