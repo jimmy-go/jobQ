@@ -7,6 +7,7 @@ Simple but powerful job queue in go.
 [![Go Report Card](https://goreportcard.com/badge/github.com/jimmy-go/jobq?1)](https://goreportcard.com/report/github.com/jimmy-go/jobq)
 [![GoDoc](http://godoc.org/github.com/jimmy-go/jobq?status.png)](http://godoc.org/github.com/jimmy-go/jobq)
 [![Coverage Status](https://coveralls.io/repos/github/jimmy-go/jobQ/badge.svg?branch=master&1)](https://coveralls.io/github/jimmy-go/jobQ?branch=master)
+[![Bitdeli Badge](https://d2weczhvl823v0.cloudfront.net/jimmy-go/jobq/trend.png)](https://bitdeli.com/free "Bitdeli Badge")
 
 ----
 
@@ -26,7 +27,7 @@ Add jobs:
 task := func() error {
     // do stuff...
 }
-// send the job to the queue.
+// Send the job to the queue.
 jq.Add(task)
 ```
 
