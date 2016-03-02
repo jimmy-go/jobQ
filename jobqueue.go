@@ -40,7 +40,7 @@ func New(size int, queueLen int) (*Dispatcher, error) {
 func (d *Dispatcher) run() {
 	// init and run workers.
 	for i := 0; i < d.size; i++ {
-		w := newWorker(i, d.ws, d.done)
+		w := newWorker(i, d.ws)
 		go w.run()
 		d.ws <- w
 	}
@@ -68,9 +68,14 @@ func (d *Dispatcher) Add(j Job) {
 
 // Stop stops all workers.
 func (d *Dispatcher) Stop() {
-	// +2: we need to stop Dispatcher too.
-	for i := 0; i < d.size+2; i++ {
-		d.done <- struct{}{}
+	select {
+	case d.done <- struct{}{}:
+	}
+	for i := 0; i < d.size; i++ {
+		select {
+		case w := <-d.ws:
+			w.stop()
+		}
 	}
 }
 
@@ -84,14 +89,18 @@ type Worker struct {
 }
 
 // newWorker returns a new worker.
-func newWorker(id int, dc chan *Worker, donec chan struct{}) *Worker {
+func newWorker(id int, dc chan *Worker) *Worker {
 	w := &Worker{
 		ID:   id,
 		dc:   dc,
 		jobc: make(chan Job),
-		done: donec,
+		done: make(chan struct{}, 1),
 	}
 	return w
+}
+
+func (w *Worker) stop() {
+	w.done <- struct{}{}
 }
 
 // run method runs until Dispatcher.Stop() is called.

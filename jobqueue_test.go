@@ -55,6 +55,7 @@ func TestWork(t *testing.T) {
 		})
 	}
 	jq.Stop()
+	<-time.After(25 * time.Millisecond)
 }
 
 func bench(workers, queue int, b *testing.B) {
