@@ -11,13 +11,16 @@ import (
 
 // W satisfies Work interface.
 type W struct {
-	C chan int
+	C  chan int
+	ID int
 }
 
 // Work func.
 func (w *W) Work(id int) {
+	// log.Printf("Work : id before [%v]", id)
 	<-time.After(25 * time.Millisecond)
-	w.C <- id
+	// log.Printf("Work : id after [%v]", id)
+	w.C <- w.ID
 }
 
 // H satisfies handyman interface.
@@ -46,15 +49,19 @@ func main() {
 	go func() {
 		c := make(chan int, 100)
 		go measure("Work", c, time.Now())
-		p, _ := work.New(10, 15*time.Second, func(string) {})
+		p, err := work.New(10, 15*time.Second, func(string) {})
+		if err != nil {
+			log.Printf("main : err [%s]", err)
+		}
 		for i := 0; i < 100; i++ {
 			go func(x int) {
 				p.Run(&W{
-					C: c,
+					C:  c,
+					ID: x,
 				})
 			}(i)
 		}
-		// p.Shutdown()
+		p.Shutdown()
 	}()
 	// handyman
 	go func() {
@@ -76,8 +83,14 @@ func main() {
 	go func() {
 		c := make(chan int, 100)
 		go measure("JoqQ", c, time.Now())
-		jq, _ := jobq.New(10, 10)
+		jq, err := jobq.New(10, 10)
+		if err != nil {
+			log.Printf("main : err [%s]", err)
+		}
 		for i := 0; i < 100; i++ {
+			if i == 9900 {
+				jq.Stop()
+			}
 			go func(x int) {
 				task := func() error {
 					<-time.After(25 * time.Millisecond)
@@ -87,11 +100,8 @@ func main() {
 				jq.Add(task)
 			}(i)
 		}
-		// jq.Stop()
+		jq.Wait()
 	}()
 
-	select {
-	case <-time.After(1 * time.Second):
-		log.Printf("Exit")
-	}
+	time.Sleep(2 * time.Second)
 }

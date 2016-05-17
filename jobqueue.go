@@ -7,19 +7,17 @@ var (
 	errInvalidQueueSize  = errors.New("invalid queue size")
 )
 
-// Job func. Can be any function with no input vars that returns error:
-// task := func() error {
-// 		do some work.....
-//		return err
-// }
+// Job func. Can be any function with no input vars that returns error
 type Job func() error
 
 // Dispatcher share jobs between available workers.
 type Dispatcher struct {
-	ws    chan *Worker
-	queue chan Job
-	size  int
-	done  chan struct{}
+	closed bool
+	ws     chan *Worker
+	queue  chan Job
+	size   int
+	done   chan struct{}
+	wait   chan struct{}
 }
 
 // New returns a new dispatcher.
@@ -37,46 +35,51 @@ func New(size int, queueLen int) (*Dispatcher, error) {
 		queue: make(chan Job, queueLen),
 		size:  size,
 		done:  make(chan struct{}, 1),
+		wait:  make(chan struct{}, 1),
 	}
-	d.run()
-	return d, nil
-}
-
-// run keep dispatching jobs between workers.
-func (d *Dispatcher) run() {
 	// init and run workers.
 	for i := 0; i < d.size; i++ {
 		w := newWorker(i, d.ws)
 		go w.run()
 		d.ws <- w
 	}
-	go func() {
-		for {
+	go d.run()
+	return d, nil
+}
+
+// TODO; change to waitgroup
+
+// run keep dispatching jobs between workers.
+func (d *Dispatcher) run() {
+	for {
+		select {
+		case job := <-d.queue:
+			wc := <-d.ws
 			select {
-			case job := <-d.queue:
-				select {
-				case wc := <-d.ws:
-					select {
-					case wc.jobc <- job:
+			case wc.jobc <- job:
+				// validate queue is empty and dispatcher was stopped.
+				if len(d.queue) < 1 && len(d.done) > 0 {
+					for i := 0; i < d.size; i++ {
+						select {
+						case w := <-d.ws:
+							w.stop()
+						}
 					}
+					close(d.wait)
+					return
 				}
-			case <-d.done:
-				for i := 0; i < d.size; i++ {
-					select {
-					case w := <-d.ws:
-						w.stop()
-					}
-				}
-				return
 			}
 		}
-	}()
+	}
 }
 
 // Add add job to queue channel.
-// Job type func() error
-func (d *Dispatcher) Add(j Job) {
+func (d *Dispatcher) Add(j Job) error {
+	if len(d.done) > 0 {
+		return errors.New("queue closed")
+	}
 	d.queue <- j
+	return nil
 }
 
 // Stop stops all workers.
@@ -84,8 +87,14 @@ func (d *Dispatcher) Stop() {
 	d.done <- struct{}{}
 }
 
-// Worker struct implements own job channel and notifies owner dispatcher when is
-// available for work.
+// Wait waits until jobs are done.
+func (d *Dispatcher) Wait() {
+	for _ = range d.wait {
+	}
+}
+
+// Worker struct implements own job channel and notifies owner dispatcher when
+// is available for work.
 type Worker struct {
 	ID   int
 	dc   chan *Worker
