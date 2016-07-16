@@ -7,14 +7,14 @@ var (
 	errInvalidQueueSize  = errors.New("invalid queue size")
 )
 
-// Job func. Can be any function with no input vars that returns error
-type Job func() error
+// JobFunc func. Can be any function with no input vars that returns error
+type JobFunc func() error
 
 // Dispatcher share jobs between available workers.
 type Dispatcher struct {
 	closed bool
 	ws     chan *Worker
-	queue  chan Job
+	queue  chan JobFunc
 	size   int
 	done   chan struct{}
 	wait   chan struct{}
@@ -32,7 +32,7 @@ func New(size int, queueLen int) (*Dispatcher, error) {
 	}
 	d := &Dispatcher{
 		ws:    make(chan *Worker, size),
-		queue: make(chan Job, queueLen),
+		queue: make(chan JobFunc, queueLen),
 		size:  size,
 		done:  make(chan struct{}, 1),
 		wait:  make(chan struct{}, 1),
@@ -74,7 +74,7 @@ func (d *Dispatcher) run() {
 }
 
 // Add add job to queue channel.
-func (d *Dispatcher) Add(j Job) error {
+func (d *Dispatcher) Add(j JobFunc) error {
 	if len(d.done) > 0 {
 		return errors.New("queue closed")
 	}
@@ -103,7 +103,7 @@ func (d *Dispatcher) Wait() {
 type Worker struct {
 	ID   int
 	dc   chan *Worker
-	jobc chan Job
+	jobc chan JobFunc
 	done chan struct{}
 }
 
@@ -112,7 +112,7 @@ func newWorker(id int, dc chan *Worker) *Worker {
 	w := &Worker{
 		ID:   id,
 		dc:   dc,
-		jobc: make(chan Job),
+		jobc: make(chan JobFunc),
 		done: make(chan struct{}, 1),
 	}
 	return w
