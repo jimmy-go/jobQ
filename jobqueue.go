@@ -85,6 +85,11 @@ func (d *Dispatcher) Add(j Job) error {
 // Stop stops all workers.
 func (d *Dispatcher) Stop() {
 	d.done <- struct{}{}
+	// send fake job to validate wc.job <- job:
+	select {
+	case d.queue <- func() error { return nil }:
+	default:
+	}
 }
 
 // Wait waits until jobs are done.

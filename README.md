@@ -65,24 +65,11 @@ func main() {
 	log.Printf("workers [%d]", *ws)
 	log.Printf("queue len [%d]", *qlen)
 	log.Printf("tasks [%d]", *tasks)
-	w := 650 * time.Millisecond
-	log.Printf("time for mock task [%v]", w)
+	t := 650 * time.Millisecond
+	log.Printf("time for mock task [%v]", t)
 
-	done := make(chan struct{}, 1)
 	// want to see how many goroutines are running.
-	go func() {
-		for {
-			select {
-			case <-time.After(5 * time.Second):
-				log.Printf("main : GOROUTINES [%v]", runtime.NumGoroutine())
-			case <-done:
-				log.Printf("done!")
-				return
-			}
-		}
-	}()
-
-	// declare a new worker pool
+	go goroutines()
 
 	// ws: workers size count.
 	// qlen: size for queue length. All left jobs will wait until queue release some slot.
@@ -91,43 +78,56 @@ func main() {
 		log.Printf("main : err [%s]", err)
 	}
 
-	for i := 0; i < *tasks; i++ {
-		func(index int) {
-			// task satisfies type jobq.Job, can be any function with error return.
-			// I take this aproximation because some worker pool I see around use an interface
-			// what I consider a limiting factor.
-			// this way you only need declare a function and you're ready to go!
-			// [if you think I'm doing it wrong please tell me :)]
-			task := func() error {
-				time.Sleep(w)
-				log.Printf("main : task [%d] done!", index)
-				return nil
-			}
-			// send the job to the queue.
-			jq.Add(task)
-		}(i)
-	}
+	go func() {
+		for i := 0; i < *tasks; i++ {
+			go func(index int) {
+				// task satisfies type jobq.Job, can be any function with error return.
+				// I take this aproximation because some worker pool I see around use an interface
+				// what I consider a limiting factor.
+				// this way you only need declare a function and you're ready to go!
+				now := time.Now()
+				task := func() error {
+					<-time.After(t)
+					log.Printf("main : task [%d] done! T [%s]", index, time.Since(now))
+					return nil
+				}
+				// send the job to the queue.
+				jq.Add(task)
 
-	log.Println("sleep 15 second!")
-	time.Sleep(15 * time.Second)
-	jq.Stop()
-	done <- struct{}{}
-	time.Sleep(15 * time.Second)
+				if index == *tasks-1 {
+					log.Printf("queue complete. stopping")
+					jq.Stop()
+				}
+
+			}(i)
+		}
+	}()
+
+    // Wait keep waiting forever until you call Stop()
+	jq.Wait()
 	panic(errors.New("see goroutines"))
+}
+
+func goroutines() {
+	for {
+		select {
+		case <-time.After(5 * time.Second):
+			log.Printf("main : GOROUTINES [%v]", runtime.NumGoroutine())
+		}
+	}
 }
 ```
 
 Benchmark:
-
 ```
-Benchmark100x100-4  	   10000	    122320 ns/op
-Benchmark10x100-4   	   10000	   1131420 ns/op
-Benchmark1x1-4      	     100	  11379068 ns/op
-Benchmark1x2-4      	     100	  11023856 ns/op
-Benchmark1x3-4      	     100	  10712324 ns/op
-Benchmark1000x1000-4	   50000	     35176 ns/op
-Benchmark10x30-4    	    2000	   1145672 ns/op
-Benchmark1x100-4    	   10000	  11455667 ns/op
+Benchmark100x100-4  	   10000	    107528 ns/op
+Benchmark10x100-4   	   10000	   1081856 ns/op
+Benchmark1x1-4      	     100	  10495713 ns/op
+Benchmark1x2-4      	     100	  10485961 ns/op
+Benchmark1x3-4      	     100	  10410480 ns/op
+Benchmark1000x1000-4	  200000	     11283 ns/op
+Benchmark10x30-4    	    2000	   1063811 ns/op
+Benchmark1x100-4    	   10000	  10748689 ns/op
 ```
 
 LICENSE:
