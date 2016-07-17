@@ -37,18 +37,9 @@ jq.Stop()
 
 ```
 
-###### Example:
-
 Benchmark:
 ```
-Benchmark100x100-4  	   10000	    107528 ns/op
-Benchmark10x100-4   	   10000	   1081856 ns/op
-Benchmark1x1-4      	     100	  10495713 ns/op
-Benchmark1x2-4      	     100	  10485961 ns/op
-Benchmark1x3-4      	     100	  10410480 ns/op
-Benchmark1000x1000-4	  200000	     11283 ns/op
-Benchmark10x30-4    	    2000	   1063811 ns/op
-Benchmark1x100-4    	   10000	  10748689 ns/op
+// TODO; add benchmarks
 ```
 
 License:

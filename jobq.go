@@ -32,7 +32,7 @@ import (
 var (
 	// DefaultJobQ it's the default JobQ dispatcher.
 	// will be enough for several cases.
-	DefaultJobQ, _ = New(2, 2, 250*time.Millisecond)
+	// DefaultJobQ, _ = New(2, 2, 250*time.Millisecond)
 
 	// DefaultTimeout is default duration for tasks.
 	DefaultTimeout = time.Duration(1 * time.Second)
@@ -73,7 +73,7 @@ type JobQ struct {
 
 	// size is the number of workers for deploy, sets
 	// workersc len and cap.
-	size int
+	size int32
 
 	// done send finalization signal to JobQ.
 	done chan struct{}
@@ -94,6 +94,15 @@ type JobQ struct {
 	// lock is needed to know when JobQ is ending all his
 	// tasks. It's unlocked by Stop method.
 	lock sync.WaitGroup
+
+	// mut is used for Populate method.
+	mut sync.RWMutex
+
+	// block is used for syncronicity between Populate and
+	// JobQ.run()
+	//
+	// must be always full.
+	block chan struct{}
 }
 
 // New returns a new JobQ dispatcher.
@@ -101,30 +110,22 @@ type JobQ struct {
 // size: how many workers would init.
 // queueLen: how many tasks would put in queue before block.
 // timeout: duration limit for every task.
-func New(size int, queueLen int, timeout time.Duration) (*JobQ, error) {
+func New(size, queueLen int, timeout time.Duration) (*JobQ, error) {
 	if size < 1 {
 		return nil, ErrInvalidWorkerSize
 	}
-	if queueLen < 1 {
-		return nil, ErrInvalidQueueSize
-	}
-	d := &JobQ{
-		workersc: make(chan Worker, size),
-		tasksc:   make(chan TaskFunc, queueLen),
-		size:     size,
-		done:     make(chan struct{}, 1),
-		exit:     make(chan struct{}, 1),
-		populate: make(chan struct{}, 1),
-	}
 
-	// lock JobQ in Wait until Stop is called.
-	d.lock.Add(1)
+	d, err := NewEmpty(queueLen, timeout)
+	if err != nil {
+		return nil, err
+	}
 
 	// populate workers
-	for i := 0; i < d.size; i++ {
+	for i := 0; i < size; i++ {
 		w := newDefaultWorker(timeout)
-		// every Populate call stop current JobQ.run() and restart it with another
-		// goroutine
+
+		// every Populate call stop current JobQ.run() and
+		// restart it with another goroutine.
 		err := d.Populate(w)
 		if err != nil {
 			return nil, err
@@ -134,11 +135,59 @@ func New(size int, queueLen int, timeout time.Duration) (*JobQ, error) {
 	return d, nil
 }
 
+// Must returns a new JobQ or panics.
+func Must(size, queueLen int, timeout time.Duration) *JobQ {
+	d, err := New(size, queueLen, timeout)
+	if err != nil {
+		panic(err)
+	}
+	return d
+}
+
+// NewEmpty generates a new empty JobQ with a defined queue
+// length.
+func NewEmpty(queueLen int, timeout time.Duration) (*JobQ, error) {
+	if queueLen < 1 {
+		return nil, ErrInvalidQueueSize
+	}
+	d := &JobQ{
+		tasksc:   make(chan TaskFunc, queueLen),
+		done:     make(chan struct{}, 1),
+		exit:     make(chan struct{}, 1),
+		populate: make(chan struct{}, 1),
+		block:    make(chan struct{}, 1),
+	}
+
+	// keep block full until Populate calls.
+	drainempty(d.block)
+	d.block <- struct{}{}
+
+	// lock JobQ in Wait until Stop is called.
+	d.lock.Add(1)
+
+	return d, nil
+}
+
 // run keep dispatching tasks between workers.
 func (d *JobQ) run() {
+	defer func() {
+		drainempty(d.block)
+		d.block <- struct{}{}
+	}()
 	for {
 		select {
 		case w := <-d.workersc:
+			// return to pool.
+			if len(d.populate) > 0 {
+				d.workersc <- w
+				return
+			}
+
+			if w.Drain() {
+				// drain resource
+				continue
+			}
+
 			go func() {
 				job := <-d.tasksc
 				w.Do(job)
@@ -175,16 +224,35 @@ func (d *JobQ) run() {
 // every call to Populate stops current JobQ.run() method
 // and respawn it.
 func (d *JobQ) Populate(w Worker) error {
+	d.mut.RLock()
+	defer d.mut.RUnlock()
 
 	// make quit previous run method.
 	drainempty(d.populate)
 	d.populate <- struct{}{}
 
-	if len(d.workersc) >= d.size {
-		return ErrFullWorkers
+	// this will make sure JobQ.run() returns first.
+	<-d.block
+
+	// keep workers
+	cache := make(chan Worker, len(d.workersc))
+	for i := 0; i < len(d.workersc); i++ {
+		x := <-d.workersc
+		cache <- x
 	}
 
+	d.size++
+	// log.Printf("JobQ : Populate : size [%v]", d.size)
+
+	// repopulate worker channel.
+	d.workersc = make(chan Worker, len(cache)+1)
+	for i := 0; i < len(cache); i++ {
+		y := <-cache
+		d.workersc <- y
+	}
 	d.workersc <- w
+
+	// TODO; validate until add auto scale function
 
 	// start receiving tasks
 	go d.run()

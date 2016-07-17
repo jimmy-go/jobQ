@@ -6,6 +6,10 @@ import (
 	"time"
 )
 
+func init() {
+	// log.SetFlags(log.Lshortfile)
+}
+
 // T type for test.
 type T struct {
 	Size     int
@@ -25,50 +29,45 @@ func TestTable(t *testing.T) {
 	for _, m := range tests {
 		x := struct{ M T }{m}
 
-		jq, err := New(x.M.Size, x.M.Len, x.M.timeout)
+		_, err := New(x.M.Size, x.M.Len, x.M.timeout)
 		if err == nil && x.M.Expected == nil {
 			continue
 		}
 
 		if err != nil && err.Error() != x.M.Expected.Error() {
-			log.Printf("TestTable : err [%s] expected [%s]", err, x.M.Expected)
-			t.Fail()
+			// log.Printf("TestTable : err [%s] expected [%s]", err, x.M.Expected)
+			t.FailNow()
 			return
 		}
-
-		if jq == nil {
-			log.Printf("TestTable : nil err with m [%#v] err [%s] exp [%s]", x.M, err, x.M.Expected)
-			t.Fail()
-			return
-		}
-
-		jq.AddTask(func(cancel chan struct{}) error {
-			return nil
-		})
-		jq.Stop()
 	}
 }
 
 // TestWork it needs to be proved running.
 func TestWork(t *testing.T) {
-	log.Printf("TestWork : start")
-
-	jq, err := New(1, 1, DefaultTimeout)
-	if err != nil {
-		t.Fail()
-	}
 	size := 10
+
+	jq, err := New(2, size, DefaultTimeout)
+	if err != nil {
+		t.FailNow()
+		return
+	}
+
 	c := make(chan int, size)
+
 	go func() {
 		var count int
 		for i := range c {
+			log.Printf("TestWork : Stop All at [%v]", i)
 			count++
-			if count == size {
-				log.Printf("TestWork : Stop All at [%v]", i)
+			if count >= size {
+				_ = i
 				jq.Stop()
+				log.Printf("TestWork : Stop All at [%v] return", i)
+				return
 			}
 		}
 	}()
+
 	go func() {
 		for i := 0; i < size; i++ {
 			// change m with i and see a racecondition.
@@ -79,16 +78,16 @@ func TestWork(t *testing.T) {
 				})
 			}(i)
 		}
+
+		jq.Stop()
 	}()
 
 	jq.Wait()
-
-	log.Printf("TestWork : return")
 }
 
 func bench(workers, queue int, b *testing.B) {
 
-	log.Printf("bench : workers [%v] queue [%v]", workers, queue)
+	// log.Printf("bench : workers [%v] queue [%v]", workers, queue)
 
 	jq, err := New(workers, queue, DefaultTimeout)
 	if err != nil {
@@ -99,10 +98,11 @@ func bench(workers, queue int, b *testing.B) {
 	go func() {
 		var count int
 		for i := range c {
-			log.Printf("bench : at [%v]", i)
+			// log.Printf("bench : at [%v]", i)
 			count++
 			if count == queue {
-				log.Printf("bench : Stop All at [%v]", i)
+				// log.Printf("bench : Stop All at [%v]", i)
+				_ = i
 				jq.Stop()
 			}
 		}
@@ -112,10 +112,10 @@ func bench(workers, queue int, b *testing.B) {
 		var ii int
 		for pb.Next() {
 			ii++
-			log.Printf("bench : add")
+			// log.Printf("bench : add")
 			task := func(cancel chan struct{}) error {
 				// c <- ii
-				log.Printf("bench : added")
+				// log.Printf("bench : added")
 				return nil
 			}
 			jq.AddTask(task)
