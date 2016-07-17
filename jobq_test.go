@@ -78,8 +78,6 @@ func TestWork(t *testing.T) {
 				})
 			}(i)
 		}
-
-		jq.Stop()
 	}()
 
 	jq.Wait()

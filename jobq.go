@@ -25,7 +25,9 @@ package jobq
 
 import (
 	"errors"
+	"log"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -75,18 +77,6 @@ type JobQ struct {
 	// workersc len and cap.
 	size int32
 
-	// done send finalization signal to JobQ.
-	done chan struct{}
-
-	// exit is populated when Stop is called, so every
-	// AddTask call after that will be skipped and no task
-	// will be added to queue.
-	exit chan struct{}
-
-	// populate is full when Populate method is called and
-	// does JobQ.run() quit.
-	populate chan struct{}
-
 	// wg defines how many tasks are running currently.
 	// it locks on JobQ.Wait() method.
 	wg sync.WaitGroup
@@ -103,6 +93,10 @@ type JobQ struct {
 	//
 	// must be always full.
 	block chan struct{}
+
+	// TODO; change this by tick, tick will keep ticking until tasks are empty
+	// done send finalization signal to JobQ.
+	done chan struct{}
 }
 
 // New returns a new JobQ dispatcher.
@@ -151,11 +145,9 @@ func NewEmpty(queueLen int, timeout time.Duration) (*JobQ, error) {
 		return nil, ErrInvalidQueueSize
 	}
 	d := &JobQ{
-		tasksc:   make(chan TaskFunc, queueLen),
-		done:     make(chan struct{}, 1),
-		exit:     make(chan struct{}, 1),
-		populate: make(chan struct{}, 1),
-		block:    make(chan struct{}, 1),
+		tasksc: make(chan TaskFunc, queueLen),
+		done:   make(chan struct{}, 1),
+		block:  make(chan struct{}, 1),
 	}
 
 	// keep block full until Populate calls.
@@ -177,30 +169,28 @@ func (d *JobQ) run() {
 	for {
 		select {
 		case w := <-d.workersc:
-			// return to pool.
-			if len(d.populate) > 0 {
-				d.workersc <- w
-				return
-			}
+			//			if w.Drain() {
+			//				// drain resource
+			//				continue
+			//			}
 
-			if w.Drain() {
-				// drain resource
-				continue
-			}
-
-			go func() {
-				job := <-d.tasksc
-				w.Do(job)
-				d.workersc <- w
-				d.wg.Done()
-			}()
+			job := <-d.tasksc
+			log.Printf("JobQ : run : take job")
+			w.Do(job)
+			log.Printf("JobQ : run : work done")
+			d.workersc <- w
+			log.Printf("JobQ : run : worker return to pool")
+			d.wg.Done()
+			log.Printf("JobQ : run : wg Done")
 		case <-d.done:
 
 			// if exit is full means Stop has been called
 			// so with can realase this lock.
-			if len(d.tasksc) < 1 && len(d.exit) > 0 {
-				// log.Printf("JobQ : run exit")
-				d.lock.Done()
+			if len(d.tasksc) < 1 {
+				log.Printf("JobQ : run exit")
+				if atomic.LoadInt32(&d.size) > 1 {
+					d.lock.Done()
+				}
 				return
 			}
 
@@ -209,12 +199,7 @@ func (d *JobQ) run() {
 			// and don't forget to drain before
 			drainempty(d.done)
 			d.done <- struct{}{}
-		case <-d.populate:
-			if len(d.tasksc) < 1 {
-				return
-			}
-			drainempty(d.populate)
-			d.populate <- struct{}{}
+			log.Printf("JobQ : run done call")
 		}
 	}
 }
@@ -224,15 +209,17 @@ func (d *JobQ) run() {
 // every call to Populate stops current JobQ.run() method
 // and respawn it.
 func (d *JobQ) Populate(w Worker) error {
-	d.mut.RLock()
-	defer d.mut.RUnlock()
+	// d.mut.RLock()
+	// defer d.mut.RUnlock()
 
-	// make quit previous run method.
-	drainempty(d.populate)
-	d.populate <- struct{}{}
+	if atomic.LoadInt32(&d.size) > 0 {
+		// make quit previous run method.
+		drainempty(d.done)
+		d.done <- struct{}{}
 
-	// this will make sure JobQ.run() returns first.
-	<-d.block
+		// this will make sure JobQ.run() returns first.
+		<-d.block
+	}
 
 	// keep workers
 	cache := make(chan Worker, len(d.workersc))
@@ -241,11 +228,11 @@ func (d *JobQ) Populate(w Worker) error {
 		cache <- x
 	}
 
-	d.size++
-	// log.Printf("JobQ : Populate : size [%v]", d.size)
+	d.size = atomic.AddInt32(&d.size, 1)
+	log.Printf("JobQ : Populate : size [%v]", atomic.LoadInt32(&d.size))
 
 	// repopulate worker channel.
-	d.workersc = make(chan Worker, len(cache)+1)
+	d.workersc = make(chan Worker, int(atomic.LoadInt32(&d.size)))
 	for i := 0; i < len(cache); i++ {
 		y := <-cache
 		d.workersc <- y
@@ -262,7 +249,7 @@ func (d *JobQ) Populate(w Worker) error {
 
 // AddTask add a task (see TaskFunc) to queue.
 func (d *JobQ) AddTask(task TaskFunc) error {
-	if len(d.exit) > 0 {
+	if len(d.done) > 0 {
 		return ErrStopped
 	}
 	d.tasksc <- task
@@ -278,14 +265,12 @@ func (d *JobQ) Stop() {
 
 	// prevent multiple calls to Stop, prevent buggy
 	// behaviour.
-	if len(d.exit) > 0 {
+	if len(d.done) > 0 {
 		return
 	}
 
 	drainempty(d.done)
-	drainempty(d.exit)
 	d.done <- struct{}{}
-	d.exit <- struct{}{}
 }
 
 // Wait make JobQ waits until all tasks are done.
@@ -296,6 +281,7 @@ func (d *JobQ) Wait() {
 	// clean your mess honey, we don't leave traces.
 	drainworkersc(d.workersc)
 	draintasksc(d.tasksc)
+	drainempty(d.done)
 }
 
 // Worker interface

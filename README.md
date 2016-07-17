@@ -1,6 +1,6 @@
-#### Job Queue in Go
+#### JobQ v2
 
-Simple but powerful job queue in go.
+Job queue in go with support for custom workers.
 
 [![License MIT](https://img.shields.io/npm/l/express.svg)](http://opensource.org/licenses/MIT)
 [![Build Status](https://travis-ci.org/jimmy-go/jobQ.svg?branch=master)](https://travis-ci.org/jimmy-go/jobQ)
@@ -10,39 +10,44 @@ Simple but powerful job queue in go.
 
 ----
 
-##### Usage:
+###### Install:
+```
+go get gopkg.in/jimmy-go/jobq.v2
+```
+
+###### Usage:
 
 Declare a new worker pool:
 
 ```go
 // ws: workers size count.
 // qlen: size for queue length. All left jobs will wait until queue release some slot.
-jq, err := jobq.New(*ws, *qlen)
-```
+// timeout: timeout for tasks.
+jq, err := jobq.New(ws, qlen, time.Duration(time.Second))
 
-Add jobs:
-
-```go
-task := func() error {
+// Add tasks
+task := func(cancel chan struct{}) error {
     // do stuff...
 }
-// Send the job to the queue.
-jq.Add(task)
-```
+jq.AddTask(task)
 
-Stop the pool:
-
-```go
+// Stop the pool
 jq.Stop()
 
+// Wait blocks until Stop is called and tasks are completed.
+jq.Wait()
 ```
 
-Benchmark:
+###### Benchmark:
 ```
 // TODO; add benchmarks
 ```
 
-License:
+###### Version 1:
+
+Deprecated version 1 here: `go get gopkg.in/jimmy-go/jobq.v1`
+
+###### License:
 
 The MIT License (MIT)
 
