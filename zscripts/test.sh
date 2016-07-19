@@ -20,4 +20,5 @@ if [ "$1" == "html" ]; then
     exit;
 fi
 
+#go test -cover -coverprofile=coverage.out -test.run=TestPopulate
 go test -cover -coverprofile=coverage.out

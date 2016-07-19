@@ -18,7 +18,7 @@ type T struct {
 	timeout  time.Duration
 }
 
-// TestTable tests invalid inputs.
+// TestTable basic table test
 func TestTable(t *testing.T) {
 	var tests = []T{
 		{1, 2, nil, DefaultTimeout},
@@ -29,7 +29,7 @@ func TestTable(t *testing.T) {
 	for _, m := range tests {
 		x := struct{ M T }{m}
 
-		_, err := New(x.M.Size, x.M.Len, x.M.timeout)
+		_, err := NewDefault(x.M.Size, x.M.Len, x.M.timeout)
 		if err == nil && x.M.Expected == nil {
 			continue
 		}
@@ -42,40 +42,45 @@ func TestTable(t *testing.T) {
 	}
 }
 
-// TestWork it needs to be proved running.
-func TestWork(t *testing.T) {
-	size := 10
+// TestSimple create a new JobQ and make simple tasks until
+// Stop is call.
+func TestSimple(t *testing.T) {
+	queue := 5
 
-	jq, err := New(2, size, DefaultTimeout)
+	jq, err := NewDefault(3, queue, DefaultTimeout)
 	if err != nil {
 		t.FailNow()
 		return
 	}
 
-	c := make(chan int, size)
+	c := make(chan int, queue)
 
 	go func() {
 		var count int
 		for i := range c {
-			log.Printf("TestWork : Stop All at [%v]", i)
+			// log.Printf("TestSimple : count [%v] i [%v]", count, i)
 			count++
-			if count >= size {
+			if count >= queue {
 				_ = i
 				jq.Stop()
-				log.Printf("TestWork : Stop All at [%v] return", i)
+				// log.Printf("TestSimple : Stop at i [%v] count [%v] return", i, count)
 				return
 			}
 		}
 	}()
 
 	go func() {
-		for i := 0; i < size; i++ {
+		for i := 0; i < queue; i++ {
 			// change m with i and see a racecondition.
 			go func(m int) {
-				jq.AddTask(func(cancel chan struct{}) error {
+				err := jq.AddTask(func(cancel chan struct{}) error {
+					// log.Printf("TestSimple : send c [%v]", m)
 					c <- m
 					return nil
 				})
+				if err != nil {
+					// log.Printf("TestSimple : task err [%s]", err)
+				}
 			}(i)
 		}
 	}()
@@ -83,11 +88,70 @@ func TestWork(t *testing.T) {
 	jq.Wait()
 }
 
+// TestPopulate demonstrates that you can keep adding tasks
+// and regrow workers channel without issues.
+func TestPopulate(t *testing.T) {
+	jq, err := NewDefault(3, 10, DefaultTimeout)
+	if err != nil {
+		t.FailNow()
+		return
+	}
+
+	var exit bool
+
+	go func() {
+		for {
+			if exit {
+				log.Printf("TestPopulate : add tasks exit")
+				return
+			}
+
+			// log.Printf("TestPopulate : add task")
+			err := jq.AddTask(func(cancel chan struct{}) error {
+				// log.Printf("TestPopulate : task done")
+				return nil
+			})
+			if err != nil {
+				// log.Printf("TestPopulate : add task : err [%s]", err)
+			}
+		}
+	}()
+	go func() {
+		for {
+			if exit {
+				log.Printf("TestPopulate : populate exit")
+				return
+			}
+
+			w := newDefaultWorker(DefaultTimeout)
+			err := jq.Populate(w)
+			if err != nil {
+				log.Printf("TestPopulate : Populate : err [%s]", err)
+			}
+		}
+	}()
+
+	<-time.After(10 * time.Millisecond)
+	exit = true
+	jq.Stop()
+
+	jq.Wait()
+}
+
+// TestTimeout demonstrates JobQ can't block when task didn't
+// return
+func TestTimeout(t *testing.T) {
+}
+
+// TestCustomWorker makes work with a custom worker.
+func TestCustomWorker(t *testing.T) {
+}
+
 func bench(workers, queue int, b *testing.B) {
 
 	// log.Printf("bench : workers [%v] queue [%v]", workers, queue)
 
-	jq, err := New(workers, queue, DefaultTimeout)
+	jq, err := NewDefault(workers, queue, DefaultTimeout)
 	if err != nil {
 		b.Fail()
 	}

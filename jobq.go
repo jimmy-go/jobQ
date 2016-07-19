@@ -27,7 +27,6 @@ import (
 	"errors"
 	"log"
 	"sync"
-	"sync/atomic"
 	"time"
 )
 
@@ -57,6 +56,9 @@ var (
 	// ErrInvalidQueueSize error is returned when you init
 	// a new JobQ with queue length less than 1.
 	ErrInvalidQueueSize = errors.New("jobq: invalid queue size")
+
+	// ErrWorkersNotFound _
+	ErrWorkersNotFound = errors.New("jobq: workers not found, channel is empty?")
 )
 
 // TaskFunc defines behavior for a task.
@@ -77,39 +79,30 @@ type JobQ struct {
 	// workersc len and cap.
 	size int32
 
-	// wg defines how many tasks are running currently.
-	// it locks on JobQ.Wait() method.
-	wg sync.WaitGroup
-
 	// lock is needed to know when JobQ is ending all his
 	// tasks. It's unlocked by Stop method.
 	lock sync.WaitGroup
 
-	// mut is used for Populate method.
-	mut sync.RWMutex
+	// done is full when Stop method is called.
+	done chan struct{}
 
-	// block is used for syncronicity between Populate and
-	// JobQ.run()
-	//
-	// must be always full.
 	block chan struct{}
 
-	// TODO; change this by tick, tick will keep ticking until tasks are empty
-	// done send finalization signal to JobQ.
-	done chan struct{}
+	mut sync.RWMutex
 }
 
-// New returns a new JobQ dispatcher.
+// NewDefault returns a new JobQ dispatcher with worker
+// type DefaultWorker.
+//
+// In most cases this will be enough for your requisites,
+// but take a look on Worker interface first.
 //
 // size: how many workers would init.
-// queueLen: how many tasks would put in queue before block.
-// timeout: duration limit for every task.
-func New(size, queueLen int, timeout time.Duration) (*JobQ, error) {
-	if size < 1 {
-		return nil, ErrInvalidWorkerSize
-	}
-
-	d, err := NewEmpty(queueLen, timeout)
+// queueLen: how many tasks can take before block.
+// timeout: duration limit for task.
+//
+func NewDefault(size, queueLen int, timeout time.Duration) (*JobQ, error) {
+	d, err := New(size, queueLen, timeout)
 	if err != nil {
 		return nil, err
 	}
@@ -117,9 +110,6 @@ func New(size, queueLen int, timeout time.Duration) (*JobQ, error) {
 	// populate workers
 	for i := 0; i < size; i++ {
 		w := newDefaultWorker(timeout)
-
-		// every Populate call stop current JobQ.run() and
-		// restart it with another goroutine.
 		err := d.Populate(w)
 		if err != nil {
 			return nil, err
@@ -130,6 +120,7 @@ func New(size, queueLen int, timeout time.Duration) (*JobQ, error) {
 }
 
 // Must returns a new JobQ or panics.
+//
 func Must(size, queueLen int, timeout time.Duration) *JobQ {
 	d, err := New(size, queueLen, timeout)
 	if err != nil {
@@ -138,122 +129,183 @@ func Must(size, queueLen int, timeout time.Duration) *JobQ {
 	return d
 }
 
-// NewEmpty generates a new empty JobQ with a defined queue
-// length.
-func NewEmpty(queueLen int, timeout time.Duration) (*JobQ, error) {
+// New generates a empty JobQ.
+//
+// workers indicate cap of channel workersc before grow.
+// queueLen indicate cap of queue channel before block.
+// You need to call Populate method after calling New
+//
+func New(workers, queueLen int, timeout time.Duration) (*JobQ, error) {
+	if workers < 1 {
+		return nil, ErrInvalidWorkerSize
+	}
 	if queueLen < 1 {
 		return nil, ErrInvalidQueueSize
 	}
 	d := &JobQ{
-		tasksc: make(chan TaskFunc, queueLen),
-		done:   make(chan struct{}, 1),
-		block:  make(chan struct{}, 1),
+		tasksc:   make(chan TaskFunc, queueLen),
+		workersc: make(chan Worker, workers*2),
+		done:     make(chan struct{}, 1),
+		block:    make(chan struct{}, 1),
 	}
 
-	// keep block full until Populate calls.
-	drainempty(d.block)
-	d.block <- struct{}{}
-
-	// lock JobQ in Wait until Stop is called.
+	// this will be unlocked by Stop method.
+	log.Printf("JobQ : New : lock add 1")
 	d.lock.Add(1)
+
+	// start receiving tasks
+	go d.run()
 
 	return d, nil
 }
 
 // run keep dispatching tasks between workers.
 func (d *JobQ) run() {
+	log.Printf("JobQ : run start")
+
+	// lock JobQ in Wait until Stop is called.
+	log.Printf("JobQ : run : lock add 1")
+	d.lock.Add(1)
 	defer func() {
-		drainempty(d.block)
+		log.Printf("JobQ : run return")
+		log.Printf("JobQ : run : lock done 1")
+		d.lock.Done()
 		d.block <- struct{}{}
 	}()
+
 	for {
-		select {
-		case w := <-d.workersc:
-			//			if w.Drain() {
-			//				// drain resource
-			//				continue
-			//			}
-
-			job := <-d.tasksc
-			log.Printf("JobQ : run : take job")
-			w.Do(job)
-			log.Printf("JobQ : run : work done")
-			d.workersc <- w
-			log.Printf("JobQ : run : worker return to pool")
-			d.wg.Done()
-			log.Printf("JobQ : run : wg Done")
-		case <-d.done:
-
-			// if exit is full means Stop has been called
-			// so with can realase this lock.
-			if len(d.tasksc) < 1 {
-				log.Printf("JobQ : run exit")
-				if atomic.LoadInt32(&d.size) > 1 {
-					d.lock.Done()
-				}
+		if len(d.workersc) < 1 {
+			if len(d.done) > 0 && len(d.tasksc) < 1 {
 				return
 			}
-
-			// keep full is not ready yet to quit
-			//
-			// and don't forget to drain before
-			drainempty(d.done)
-			d.done <- struct{}{}
-			log.Printf("JobQ : run done call")
+			continue
 		}
+		w := <-d.workersc
+
+		// if done is full means Stop has been called
+		// so can realase this lock.
+		if len(d.done) > 0 && len(d.tasksc) < 1 {
+			return
+		}
+
+		// validate worker is OK
+		if w.Drain() {
+			// drain resource
+			continue
+		}
+
+		// take task, run task, return worker to pool
+		// prevent block
+		if len(d.tasksc) > 0 {
+			job := <-d.tasksc
+			w.Do(job)
+		}
+		d.workersc <- w
 	}
 }
 
 // Populate adds a worker.
 //
-// every call to Populate stops current JobQ.run() method
-// and respawn it.
+// if workers is equal to len(workersc) this will duplicate
+// workersc size and respawn JobQ.run method.
+//
 func (d *JobQ) Populate(w Worker) error {
-	// d.mut.RLock()
-	// defer d.mut.RUnlock()
+	log.Printf("JobQ : Populate : start")
+	d.mut.RLock()
+	defer func() {
+		d.mut.RUnlock()
+		log.Printf("JobQ : Populate : return")
+	}()
 
-	if atomic.LoadInt32(&d.size) > 0 {
-		// make quit previous run method.
-		drainempty(d.done)
-		d.done <- struct{}{}
-
-		// this will make sure JobQ.run() returns first.
-		<-d.block
+	maxcap := cap(d.workersc)
+	if len(d.workersc) < maxcap {
+		d.workersc <- w
+		return nil
 	}
+
+	log.Printf("JobQ : Populate : size [%v] cap [%v]", len(d.workersc), maxcap)
+	if len(d.workersc) < 1 {
+		return ErrWorkersNotFound
+	}
+
+	// stop JobQ.run
+	drainempty(d.done)
+	d.done <- struct{}{}
+
+	// block until run exits
+	<-d.block
+	log.Printf("JobQ : Populate : unblocked")
+
+	// make cache from tasks to prevent block.
+	cachetask := make(chan TaskFunc, 1000*1000)
+	go func() {
+		if len(d.tasksc) < 1 {
+			log.Printf("JobQ : Populate : cached tasks : return")
+			return
+		}
+		for task := range d.tasksc {
+			log.Printf("JobQ : Populate : cached tasks : take task")
+			if len(d.tasksc) < 2 {
+				log.Printf("JobQ : Populate : cached tasks")
+				return
+			}
+			cachetask <- task
+		}
+	}()
 
 	// keep workers
-	cache := make(chan Worker, len(d.workersc))
-	for i := 0; i < len(d.workersc); i++ {
-		x := <-d.workersc
-		cache <- x
+	cache := make(chan Worker, maxcap)
+	if len(d.workersc) > 0 {
+		for i := 0; i < len(d.workersc); i++ {
+			x := <-d.workersc
+			cache <- x
+		}
 	}
 
-	d.size = atomic.AddInt32(&d.size, 1)
-	log.Printf("JobQ : Populate : size [%v]", atomic.LoadInt32(&d.size))
+	log.Printf("JobQ : Populate : workers cached")
 
 	// repopulate worker channel.
-	d.workersc = make(chan Worker, int(atomic.LoadInt32(&d.size)))
-	for i := 0; i < len(cache); i++ {
-		y := <-cache
-		d.workersc <- y
+	d.workersc = make(chan Worker, maxcap*2)
+	if len(cache) > 0 {
+		for i := 0; i < len(cache); i++ {
+			y := <-cache
+			d.workersc <- y
+		}
 	}
+
 	d.workersc <- w
 
-	// TODO; validate until add auto scale function
+	log.Printf("JobQ : Populate : workers restore")
 
-	// start receiving tasks
+	// start receiving tasks again
 	go d.run()
+
+	// restore cache
+	go func() {
+		if len(cachetask) < 1 {
+			return
+		}
+		for task := range cachetask {
+			if len(cachetask) < 3 {
+				log.Printf("JobQ : Populate : cache tasks repopulated")
+				return
+			}
+			d.tasksc <- task
+		}
+	}()
 
 	return nil
 }
 
 // AddTask add a task (see TaskFunc) to queue.
 func (d *JobQ) AddTask(task TaskFunc) error {
+	if len(d.workersc) < 1 {
+		return ErrWorkersNotFound
+	}
 	if len(d.done) > 0 {
 		return ErrStopped
 	}
 	d.tasksc <- task
-	d.wg.Add(1)
 	return nil
 }
 
@@ -262,21 +314,29 @@ func (d *JobQ) AddTask(task TaskFunc) error {
 //
 // All tasks added before calling Stop will complete.
 func (d *JobQ) Stop() {
+	log.Printf("JobQ : Stop : start")
+	defer log.Printf("JobQ : Stop : return")
 
-	// prevent multiple calls to Stop, prevent buggy
-	// behaviour.
+	// prevent multiple calls
 	if len(d.done) > 0 {
 		return
 	}
 
+	// this will complete task from New call.
+	log.Printf("JobQ : Stop : lock done 1")
+	d.lock.Done()
+
 	drainempty(d.done)
 	d.done <- struct{}{}
+
+	w := <-d.workersc
+	d.workersc <- w
 }
 
 // Wait make JobQ waits until all tasks are done.
 func (d *JobQ) Wait() {
-	d.wg.Wait()   // wait until works are done.
 	d.lock.Wait() // wait until Stop is call.
+	log.Printf("JobQ : Wait : wait complete")
 
 	// clean your mess honey, we don't leave traces.
 	drainworkersc(d.workersc)

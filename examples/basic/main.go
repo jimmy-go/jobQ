@@ -33,7 +33,7 @@ func main() {
 	// qlen: size for queue length. All left jobs will wait
 	// until queue release some slot.
 	// timeout: timeout for every task
-	jq, err := jobq.New(*ws, *qlen, time.Duration(1*time.Second))
+	jq, err := jobq.NewDefault(*ws, *qlen, time.Duration(1*time.Second))
 	if err != nil {
 		log.Printf("main : err [%s]", err)
 	}
@@ -45,6 +45,19 @@ func main() {
 		for i := 0; i < *tasks; i++ {
 			log.Printf("add [%v] task", i)
 			go func(index int) {
+				if index == *tasks/2 {
+					log.Printf("stopping queue. index [%v]", index)
+					jq.Stop()
+					jq.Stop() // test multiple calls to Stop
+					err := jq.AddTask(func(cancel chan struct{}) error {
+						log.Printf("Try aditional task when JobQ is stopped")
+						return nil
+					})
+					if err != nil {
+						log.Printf("AddTask : err [%s]", err)
+					}
+				}
+
 				now := time.Now()
 				task := func(cancel chan struct{}) error {
 					<-time.After(t)
@@ -52,16 +65,9 @@ func main() {
 					return nil
 				}
 				// send the job to the queue.
-				jq.AddTask(task)
-
-				if index == *tasks-1 {
-					log.Printf("stopping queue. index [%v]", index)
-					jq.Stop()
-					jq.Stop() // test multiple calls to Stop
-					jq.AddTask(func(cancel chan struct{}) error {
-						log.Printf("Try aditional task when JobQ is stopped")
-						return nil
-					})
+				err := jq.AddTask(task)
+				if err != nil {
+					log.Printf("AddTask : err [%s]", err)
 				}
 			}(i)
 		}
