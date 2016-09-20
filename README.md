@@ -6,14 +6,12 @@
 [![GoDoc](http://godoc.org/github.com/jimmy-go/jobq?status.png)](http://godoc.org/github.com/jimmy-go/jobq)
 [![Coverage Status](https://coveralls.io/repos/github/jimmy-go/jobQ/badge.svg?branch=master&1)](https://coveralls.io/github/jimmy-go/jobQ?branch=master)
 
-----
-
-###### Install:
+######Install:
 ```
 go get gopkg.in/jimmy-go/jobq.v2
 ```
 
-###### Usage:
+######Usage:
 
 Declare a new worker pool:
 
@@ -36,16 +34,14 @@ jq.Stop()
 jq.Wait()
 ```
 
-###### Benchmark:
+######Benchmark:
 ```
-// TODO; add benchmarks
 ```
 
-###### Version 1:
+######Old version:
+`go get gopkg.in/jimmy-go/jobq.v1`
 
-Deprecated version 1 here: `go get gopkg.in/jimmy-go/jobq.v1`
-
-###### License:
+######License:
 
 The MIT License (MIT)
 
