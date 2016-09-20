@@ -19,7 +19,8 @@ var (
 func main() {
 	runtime.GOMAXPROCS(runtime.NumCPU())
 	flag.Parse()
-	log.SetFlags(log.Lshortfile | log.Lmicroseconds)
+	// log.SetFlags(log.Lshortfile | log.Lmicroseconds)
+	log.SetFlags(0)
 	log.Printf("workers [%d]", *ws)
 	log.Printf("queue len [%d]", *qlen)
 	log.Printf("tasks [%d]", *tasks)

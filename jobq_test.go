@@ -1,13 +1,13 @@
 package jobq
 
 import (
-	"log"
+	"runtime"
 	"testing"
 	"time"
 )
 
 func init() {
-	// log.SetFlags(log.Lshortfile)
+	runtime.GOMAXPROCS(runtime.NumCPU())
 }
 
 // T type for test.
@@ -20,6 +20,9 @@ type T struct {
 
 // TestTable basic table test
 func TestTable(t *testing.T) {
+	t.Logf("TestTable : start")
+	defer t.Logf("TestTable : return")
+
 	var tests = []T{
 		{1, 2, nil, DefaultTimeout},
 		{7, 6, nil, DefaultTimeout},
@@ -35,7 +38,7 @@ func TestTable(t *testing.T) {
 		}
 
 		if err != nil && err.Error() != x.M.Expected.Error() {
-			// log.Printf("TestTable : err [%s] expected [%s]", err, x.M.Expected)
+			// t.Logf("TestTable : err [%s] expected [%s]", err, x.M.Expected)
 			t.FailNow()
 			return
 		}
@@ -45,6 +48,9 @@ func TestTable(t *testing.T) {
 // TestSimple create a new JobQ and make simple tasks until
 // Stop is call.
 func TestSimple(t *testing.T) {
+	t.Logf("TestSimple : start")
+	defer t.Logf("TestSimple : return")
+
 	queue := 5
 
 	jq, err := NewDefault(3, queue, DefaultTimeout)
@@ -58,12 +64,14 @@ func TestSimple(t *testing.T) {
 	go func() {
 		var count int
 		for i := range c {
-			// log.Printf("TestSimple : count [%v] i [%v]", count, i)
+			// t.Logf("TestSimple : count [%v] i [%v]", count, i)
 			count++
 			if count >= queue {
 				_ = i
 				jq.Stop()
-				// log.Printf("TestSimple : Stop at i [%v] count [%v] return", i, count)
+				jq.Stop() // make sure calling twice make no
+				// change
+				// t.Logf("TestSimple : Stop at i [%v] count [%v] return", i, count)
 				return
 			}
 		}
@@ -74,12 +82,12 @@ func TestSimple(t *testing.T) {
 			// change m with i and see a racecondition.
 			go func(m int) {
 				err := jq.AddTask(func(cancel chan struct{}) error {
-					// log.Printf("TestSimple : send c [%v]", m)
+					// t.Logf("TestSimple : send c [%v]", m)
 					c <- m
 					return nil
 				})
 				if err != nil {
-					// log.Printf("TestSimple : task err [%s]", err)
+					// t.Logf("TestSimple : task err [%s]", err)
 				}
 			}(i)
 		}
@@ -91,65 +99,204 @@ func TestSimple(t *testing.T) {
 // TestPopulate demonstrates that you can keep adding tasks
 // and regrow workers channel without issues.
 func TestPopulate(t *testing.T) {
+	t.Logf("TestPopulate : start")
+	defer t.Logf("TestPopulate : return")
+
 	jq, err := NewDefault(3, 10, DefaultTimeout)
 	if err != nil {
 		t.FailNow()
 		return
 	}
 
-	var exit bool
+	l := 1500
 
 	go func() {
-		for {
-			if exit {
-				log.Printf("TestPopulate : add tasks exit")
-				return
-			}
-
-			// log.Printf("TestPopulate : add task")
+		for i := 0; i < l; i++ {
+			goru := runtime.NumGoroutine()
+			t.Logf("TestPopulate : goroutines [%v]", goru)
+			return
+		}
+	}()
+	go func() {
+		for i := 0; i < l; i++ {
+			// t.Logf("TestPopulate : add task")
 			err := jq.AddTask(func(cancel chan struct{}) error {
-				// log.Printf("TestPopulate : task done")
+				// t.Logf("TestPopulate : task done")
 				return nil
 			})
 			if err != nil {
-				// log.Printf("TestPopulate : add task : err [%s]", err)
+				// t.Logf("TestPopulate : add task : err [%s]", err)
 			}
 		}
 	}()
 	go func() {
-		for {
-			if exit {
-				log.Printf("TestPopulate : populate exit")
-				return
-			}
-
+		<-time.After(50 * time.Millisecond)
+		for i := 0; i < 5; i++ {
 			w := newDefaultWorker(DefaultTimeout)
 			err := jq.Populate(w)
 			if err != nil {
-				log.Printf("TestPopulate : Populate : err [%s]", err)
+				t.Logf("TestPopulate : Populate : err [%s]", err)
 			}
 		}
 	}()
 
-	<-time.After(10 * time.Millisecond)
-	exit = true
+	t.Logf("TestPopulate : before wait time")
+	time.Sleep(1500 * time.Millisecond)
+	t.Logf("TestPopulate : wait time")
 	jq.Stop()
-
+	t.Logf("TestPopulate : between Stop & Wait")
 	jq.Wait()
+}
+
+// TestMustOK demonstrates Must returns a valid JobQ
+func TestMustOK(t *testing.T) {
+	t.Logf("TestMustOK : start")
+	defer t.Logf("TestMustOK : return")
+
+	defer func() {
+		if err := recover(); err != nil {
+			t.Fail()
+			t.Logf("TestMust : recover err : [%s]", err)
+		}
+	}()
+
+	// must work
+	m := Must(2, 2, time.Second)
+	if m == nil {
+		t.Fail()
+	}
+}
+
+// TestMustFailSize demonstrates panic if worker count is
+// invalid
+func TestMustFailSize(t *testing.T) {
+	t.Logf("TestMustFailSize : start")
+	defer t.Logf("TestMustFailSize : return")
+
+	defer func() {
+		if err := recover(); err != nil {
+			if err != ErrInvalidWorkerSize {
+				t.Fail()
+				t.Logf("TestMust : recover err : [%s]", err)
+			}
+		}
+	}()
+	// must panic
+	Must(0, 1, time.Second)
+}
+
+// TestMustFailQueue demonstrates panic if queue len is
+// invalid
+func TestMustFailQueue(t *testing.T) {
+	t.Logf("TestMustFailQueue : start")
+	defer t.Logf("TestMustFailQueue : return")
+
+	defer func() {
+		if err := recover(); err != nil {
+			if err != ErrInvalidQueueSize {
+				t.Fail()
+				t.Logf("TestMust : recover err : [%s]", err)
+			}
+		}
+	}()
+	// must panic
+	Must(1, 0, time.Second)
 }
 
 // TestTimeout demonstrates JobQ can't block when task didn't
 // return
 func TestTimeout(t *testing.T) {
+	t.Logf("TestTimeout : start")
+	defer t.Logf("TestTimeout : return")
+
+	jq, err := NewDefault(1, 1, 100*time.Millisecond)
+	if err != nil {
+		t.Fail()
+		return
+	}
+
+	// task 1
+	if err := jq.AddTask(func(cancel chan struct{}) error {
+		select {}
+		t.Logf("TestTimeout : this log it will no show!")
+		return nil
+	}); err != nil {
+		t.Fail()
+		t.Logf("TestCustomWorker : err : [%s]", err)
+		return
+	}
+
+	jq.Stop()
+	jq.Wait()
+}
+
+// MyWorker implements Worker interface.
+type MyWorker struct {
+	drain bool
+}
+
+func (w *MyWorker) Do(task TaskFunc) error {
+	return nil
+}
+
+func (w *MyWorker) Drain() bool {
+	return w.drain
 }
 
 // TestCustomWorker makes work with a custom worker.
 func TestCustomWorker(t *testing.T) {
+	t.Logf("TestCustomWorker : start")
+	defer t.Logf("TestCustomWorker : return")
+
+	jq, err := New(2, 2, time.Second)
+	if err != nil {
+		t.Fail()
+		return
+	}
+	// task 1
+	if err := jq.AddTask(func(cancel chan struct{}) error {
+		return nil
+	}); err != ErrWorkersNotFound {
+		t.Fail()
+		t.Logf("TestCustomWorker : err : [%s] expected [%s]", err, ErrWorkersNotFound)
+		return
+	}
+
+	w := &MyWorker{drain: false}
+	err = jq.Populate(w)
+	if err != nil {
+		t.Fail()
+		t.Logf("TestCustomWorker : err : [%s]", err)
+		return
+	}
+
+	// task 2
+	if err := jq.AddTask(func(cancel chan struct{}) error {
+		return nil
+	}); err != nil {
+		t.Fail()
+		t.Logf("TestCustomWorker : err : [%s]", err)
+		return
+	}
+
+	// make worker be drained
+	w.drain = true
+
+	// task 3 will return err not workers found because was
+	// drained.
+	if err := jq.AddTask(func(cancel chan struct{}) error {
+		return nil
+	}); err != nil {
+		t.Logf("TestCustomWorker : err : [%s]", err)
+	}
+
+	jq.Stop()
+	jq.Wait()
 }
 
 func bench(workers, queue int, b *testing.B) {
 
-	// log.Printf("bench : workers [%v] queue [%v]", workers, queue)
+	// t.Logf("bench : workers [%v] queue [%v]", workers, queue)
 
 	jq, err := NewDefault(workers, queue, DefaultTimeout)
 	if err != nil {
@@ -160,10 +307,10 @@ func bench(workers, queue int, b *testing.B) {
 	go func() {
 		var count int
 		for i := range c {
-			// log.Printf("bench : at [%v]", i)
+			// t.Logf("bench : at [%v]", i)
 			count++
 			if count == queue {
-				// log.Printf("bench : Stop All at [%v]", i)
+				// t.Logf("bench : Stop All at [%v]", i)
 				_ = i
 				jq.Stop()
 			}
@@ -174,10 +321,10 @@ func bench(workers, queue int, b *testing.B) {
 		var ii int
 		for pb.Next() {
 			ii++
-			// log.Printf("bench : add")
+			// t.Logf("bench : add")
 			task := func(cancel chan struct{}) error {
 				// c <- ii
-				// log.Printf("bench : added")
+				// t.Logf("bench : added")
 				return nil
 			}
 			jq.AddTask(task)

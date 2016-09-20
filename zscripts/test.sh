@@ -1,6 +1,11 @@
 #!/bin/sh
 cd $GOPATH/src/github.com/jimmy-go/jobq
 
+if [ "$1" == "all" ]; then
+    go test -cover
+    exit;
+fi
+
 if [ "$1" == "bench" ]; then
     go test -race -bench=.
     exit;
@@ -20,5 +25,5 @@ if [ "$1" == "html" ]; then
     exit;
 fi
 
-#go test -cover -coverprofile=coverage.out -test.run=TestPopulate
-go test -cover -coverprofile=coverage.out
+go test -cover -coverprofile=coverage.out -test.run=TestPopulate
+# go test -cover -coverprofile=coverage.out

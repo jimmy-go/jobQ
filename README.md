@@ -1,6 +1,4 @@
-#### JobQ v2
-
-Job queue in go with support for custom workers.
+####Job queue in go with support for custom workers.
 
 [![License MIT](https://img.shields.io/npm/l/express.svg)](http://opensource.org/licenses/MIT)
 [![Build Status](https://travis-ci.org/jimmy-go/jobQ.svg?branch=master)](https://travis-ci.org/jimmy-go/jobQ)

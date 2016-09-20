@@ -25,8 +25,13 @@ package jobq
 
 import (
 	"errors"
+	"fmt"
 	"log"
+	"path/filepath"
+	"runtime"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -59,6 +64,15 @@ var (
 
 	// ErrWorkersNotFound _
 	ErrWorkersNotFound = errors.New("jobq: workers not found, channel is empty?")
+
+	// ErrQueueFull _
+	ErrQueueFull = errors.New("jobq: queue is full")
+)
+
+const (
+	statusEmpty = int32(iota + 1)
+	statusRunning
+	statusExit
 )
 
 // TaskFunc defines behavior for a task.
@@ -83,12 +97,11 @@ type JobQ struct {
 	// tasks. It's unlocked by Stop method.
 	lock sync.WaitGroup
 
-	// done is full when Stop method is called.
-	done chan struct{}
+	mut sync.RWMutex
+
+	status int32
 
 	block chan struct{}
-
-	mut sync.RWMutex
 }
 
 // NewDefault returns a new JobQ dispatcher with worker
@@ -145,12 +158,12 @@ func New(workers, queueLen int, timeout time.Duration) (*JobQ, error) {
 	d := &JobQ{
 		tasksc:   make(chan TaskFunc, queueLen),
 		workersc: make(chan Worker, workers*2),
-		done:     make(chan struct{}, 1),
+		status:   statusEmpty,
 		block:    make(chan struct{}, 1),
 	}
 
 	// this will be unlocked by Stop method.
-	log.Printf("JobQ : New : lock add 1")
+	printf("JobQ : New : lock add 1")
 	d.lock.Add(1)
 
 	// start receiving tasks
@@ -161,46 +174,99 @@ func New(workers, queueLen int, timeout time.Duration) (*JobQ, error) {
 
 // run keep dispatching tasks between workers.
 func (d *JobQ) run() {
-	log.Printf("JobQ : run start")
+	printf("JobQ : run start")
 
 	// lock JobQ in Wait until Stop is called.
-	log.Printf("JobQ : run : lock add 1")
+	printf("JobQ : run : lock add 1")
 	d.lock.Add(1)
+
+	// make sure change once
+	if atomic.LoadInt32(&d.status) == statusEmpty {
+		atomic.StoreInt32(&d.status, statusRunning)
+	}
+
 	defer func() {
-		log.Printf("JobQ : run return")
-		log.Printf("JobQ : run : lock done 1")
+		printf("JobQ : run : before lock done 1")
 		d.lock.Done()
+		printf("JobQ : run : lock done 1")
+		printf("JobQ : run : before fill block chan")
 		d.block <- struct{}{}
+		printf("JobQ : run : fill block chan")
+		printf("JobQ : run : return")
 	}()
 
 	for {
-		if len(d.workersc) < 1 {
-			if len(d.done) > 0 && len(d.tasksc) < 1 {
-				return
-			}
-			continue
-		}
-		w := <-d.workersc
-
-		// if done is full means Stop has been called
-		// so can realase this lock.
-		if len(d.done) > 0 && len(d.tasksc) < 1 {
+		printf("JobQ : run : for begin")
+		// if len(d.done) > 0 && len(d.tasksc) < 1 {
+		if len(d.tasksc) < 1 && atomic.LoadInt32(&d.status) == statusExit {
+			printf("JobQ : run : no more tasks and exit status")
 			return
 		}
-
-		// validate worker is OK
-		if w.Drain() {
-			// drain resource
+		printf("JobQ : run : validated exit")
+		if len(d.workersc) < 1 {
+			printf("JobQ : run : zero workers")
 			continue
 		}
+		printf("JobQ : run : len before take it [%v]", len(d.workersc))
+		select {
+		default:
+			printf("JobQ : run : can't return worker to pool")
+		case w := <-d.workersc:
+			printf("JobQ : run : worker return to pool")
 
-		// take task, run task, return worker to pool
-		// prevent block
-		if len(d.tasksc) > 0 {
-			job := <-d.tasksc
-			w.Do(job)
+			// validate worker is OK
+			if w.Drain() {
+				// drain resource
+				printf("JobQ : run : drain worker")
+				continue
+			}
+
+			// take task, run task, return worker to pool
+			// prevent block
+			if len(d.tasksc) > 0 {
+				printf("JobQ : run : before take job")
+				select {
+				default:
+					printf("JobQ : run : can't take job")
+				case job := <-d.tasksc:
+					printf("JobQ : run : take job")
+					err := w.Do(job)
+					if err != nil {
+						printf("JobQ : run : job : err [%s]", err)
+					}
+					printf("JobQ : run : job done")
+				}
+			}
+			printf("JobQ : run : before return worker")
+			select {
+			default:
+				printf("JobQ : run : can't return worker")
+				continue
+			case d.workersc <- w:
+			}
+			printf("JobQ : run : return worker")
 		}
-		d.workersc <- w
+
+		printf("JobQ : run : before return worker : len [%v] cap [%v]", len(d.workersc), cap(d.workersc))
+		if len(d.workersc) == cap(d.workersc) {
+			// FIXME; when populate is called multiple
+			// times some workers can be drained because
+			// of full channel
+			printf("JobQ : run : drain worker, populate working in parallel?")
+
+			//			go func() {
+			//				// this maybe will run forever.
+			//				for {
+			//					if len(d.workersc) <= cap(d.workersc)+2 {
+			//						d.workersc <- w
+			//						printf("JobQ : run : worker is again in pool! len [%v] cap[%v]",
+			//							len(d.workersc), cap(d.workersc))
+			//						return
+			//					}
+			//				}
+			//			}()
+			continue
+		}
 	}
 }
 
@@ -208,45 +274,42 @@ func (d *JobQ) run() {
 //
 // if workers is equal to len(workersc) this will duplicate
 // workersc size and respawn JobQ.run method.
+// Populate it's a expensive resource, don't call it so
+// frecuently
 //
 func (d *JobQ) Populate(w Worker) error {
-	log.Printf("JobQ : Populate : start")
+	printf("JobQ : Populate : start")
 	d.mut.RLock()
 	defer func() {
 		d.mut.RUnlock()
-		log.Printf("JobQ : Populate : return")
+		printf("JobQ : Populate : size [%v] cap [%v]", len(d.workersc), cap(d.workersc))
+		printf("JobQ : Populate : return")
 	}()
 
 	maxcap := cap(d.workersc)
-	if len(d.workersc) < maxcap {
+	if len(d.workersc)+1 < maxcap {
 		d.workersc <- w
 		return nil
 	}
 
-	log.Printf("JobQ : Populate : size [%v] cap [%v]", len(d.workersc), maxcap)
-	if len(d.workersc) < 1 {
-		return ErrWorkersNotFound
-	}
-
 	// stop JobQ.run
-	drainempty(d.done)
-	d.done <- struct{}{}
+	printf("JobQ : Populate : before make run quit")
+	atomic.StoreInt32(&d.status, statusExit)
+	printf("JobQ : Populate : make run quit")
 
-	// block until run exits
 	<-d.block
-	log.Printf("JobQ : Populate : unblocked")
 
 	// make cache from tasks to prevent block.
 	cachetask := make(chan TaskFunc, 1000*1000)
 	go func() {
 		if len(d.tasksc) < 1 {
-			log.Printf("JobQ : Populate : cached tasks : return")
+			printf("JobQ : Populate : cached tasks : return")
 			return
 		}
 		for task := range d.tasksc {
-			log.Printf("JobQ : Populate : cached tasks : take task")
+			printf("JobQ : Populate : cached tasks : take task")
 			if len(d.tasksc) < 2 {
-				log.Printf("JobQ : Populate : cached tasks")
+				printf("JobQ : Populate : cached tasks")
 				return
 			}
 			cachetask <- task
@@ -257,28 +320,37 @@ func (d *JobQ) Populate(w Worker) error {
 	cache := make(chan Worker, maxcap)
 	if len(d.workersc) > 0 {
 		for i := 0; i < len(d.workersc); i++ {
-			x := <-d.workersc
-			cache <- x
+			go func() {
+				x := <-d.workersc
+				cache <- x
+			}()
 		}
 	}
 
-	log.Printf("JobQ : Populate : workers cached")
+	printf("JobQ : Populate : workers cached")
+
+	// start receiving tasks again
+	go d.run()
 
 	// repopulate worker channel.
 	d.workersc = make(chan Worker, maxcap*2)
 	if len(cache) > 0 {
 		for i := 0; i < len(cache); i++ {
-			y := <-cache
-			d.workersc <- y
+			go func() {
+				y := <-cache
+				d.workersc <- y
+			}()
 		}
 	}
 
-	d.workersc <- w
-
-	log.Printf("JobQ : Populate : workers restore")
-
-	// start receiving tasks again
-	go d.run()
+	printf("JobQ : Populate : before workers restore")
+	select {
+	default:
+		printf("JobQ : Populate : fail")
+		return errors.New("jobq: can't add worker")
+	case d.workersc <- w:
+	}
+	printf("JobQ : Populate : workers restore")
 
 	// restore cache
 	go func() {
@@ -287,7 +359,7 @@ func (d *JobQ) Populate(w Worker) error {
 		}
 		for task := range cachetask {
 			if len(cachetask) < 3 {
-				log.Printf("JobQ : Populate : cache tasks repopulated")
+				printf("JobQ : Populate : cache tasks repopulated")
 				return
 			}
 			d.tasksc <- task
@@ -299,13 +371,27 @@ func (d *JobQ) Populate(w Worker) error {
 
 // AddTask add a task (see TaskFunc) to queue.
 func (d *JobQ) AddTask(task TaskFunc) error {
-	if len(d.workersc) < 1 {
-		return ErrWorkersNotFound
-	}
-	if len(d.done) > 0 {
+	printf("JobQ : AddTask : start")
+	// printf("JobQ : AddTask : queue len [%v] cap [%v]", len(d.tasksc), cap(d.tasksc))
+	defer printf("JobQ : AddTask : return")
+
+	printf("JobQ : AddTask : before validate status")
+	// validate is running
+	if atomic.LoadInt32(&d.status) != statusRunning {
+		printf("JobQ : AddTask : jobq stopped")
 		return ErrStopped
 	}
-	d.tasksc <- task
+	printf("JobQ : AddTask : validate status")
+
+	printf("JobQ : AddTask : before send task : len [%v] cap [%v]", len(d.tasksc), cap(d.tasksc))
+	select {
+	default:
+		printf("JobQ : AddTask : fail send task")
+		return errors.New("jobq: add task err")
+	case d.tasksc <- task:
+		printf("JobQ : AddTask : task send it")
+	}
+	printf("JobQ : AddTask : send task")
 	return nil
 }
 
@@ -314,34 +400,39 @@ func (d *JobQ) AddTask(task TaskFunc) error {
 //
 // All tasks added before calling Stop will complete.
 func (d *JobQ) Stop() {
-	log.Printf("JobQ : Stop : start")
-	defer log.Printf("JobQ : Stop : return")
+	printf("JobQ : Stop : start")
+	defer printf("JobQ : Stop : return")
 
 	// prevent multiple calls
-	if len(d.done) > 0 {
+	// if len(d.done) > 0 {
+	if atomic.LoadInt32(&d.status) == statusExit {
+		printf("JobQ : Stop : prevent multiple calls")
 		return
 	}
+	atomic.StoreInt32(&d.status, statusExit)
 
 	// this will complete task from New call.
-	log.Printf("JobQ : Stop : lock done 1")
+	printf("JobQ : Stop : lock done 1")
 	d.lock.Done()
 
-	drainempty(d.done)
-	d.done <- struct{}{}
+	//	drainempty(d.done)
+	//	d.done <- struct{}{}
 
-	w := <-d.workersc
-	d.workersc <- w
+	if len(d.workersc) > 0 {
+		w := <-d.workersc
+		d.workersc <- w
+	}
 }
 
 // Wait make JobQ waits until all tasks are done.
 func (d *JobQ) Wait() {
 	d.lock.Wait() // wait until Stop is call.
-	log.Printf("JobQ : Wait : wait complete")
+	printf("JobQ : Wait : wait complete")
 
-	// clean your mess honey, we don't leave traces.
-	drainworkersc(d.workersc)
-	draintasksc(d.tasksc)
-	drainempty(d.done)
+	//	// clean your mess honey, we don't leave traces.
+	//	drainworkersc(d.workersc)
+	//	draintasksc(d.tasksc)
+	//	drainempty(d.done)
 }
 
 // Worker interface
@@ -445,4 +536,12 @@ func drainworkersc(c chan Worker) {
 	for i := 0; i < len(c); i++ {
 		<-c
 	}
+}
+
+// printf logs useful information about JobQ operation.
+func printf(s string, args ...interface{}) {
+	_, f, l, _ := runtime.Caller(1)
+	x := strings.Split(filepath.Clean(f), "/")
+	name := x[len(x)-1:]
+	log.Println(fmt.Sprintf("%v:%v", name, l), fmt.Sprintf(s, args...))
 }
