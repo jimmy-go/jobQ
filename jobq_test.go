@@ -30,8 +30,6 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-
-	_ "gopkg.in/jimmy-go/vovo.v0/profiling/defpprof"
 )
 
 func init() {

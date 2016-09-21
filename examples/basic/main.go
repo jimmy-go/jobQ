@@ -7,8 +7,6 @@ import (
 	"runtime"
 	"time"
 
-	_ "gopkg.in/jimmy-go/vovo.v0/profiling/defpprof"
-
 	"github.com/jimmy-go/jobq"
 )
 
