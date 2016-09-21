@@ -100,7 +100,7 @@ func New(workers, queueSize int, timeout time.Duration) (*JobQ, error) {
 	}
 	d := &JobQ{
 		tasksc:   make(chan TaskFunc, queueSize),
-		workersc: make(chan Worker),
+		workersc: make(chan Worker, 1000000),
 	}
 	d.wg.Add(1)
 
