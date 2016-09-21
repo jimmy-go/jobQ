@@ -190,7 +190,7 @@ func TestPopulate(t *testing.T) {
 			atomic.AddInt32(&count, 1)
 
 			x := atomic.LoadInt32(&count)
-			log.Printf("DONE : X [%v]", x)
+			// log.Printf("DONE : X [%v]", x)
 
 			// keep working until 40% of tasks are done.
 			if x >= int32(6000) {
