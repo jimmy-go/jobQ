@@ -1,13 +1,72 @@
+// Package jobq contains type JobQ for worker pools.
+//
+// The MIT License (MIT)
+//
+// Copyright (c) 2016 Angel Del Castillo
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
 package jobq
 
 import (
+	"errors"
+	"log"
 	"runtime"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	_ "gopkg.in/jimmy-go/vovo.v0/profiling/defpprof"
 )
 
 func init() {
 	runtime.GOMAXPROCS(runtime.NumCPU())
+	log.SetFlags(log.Lshortfile)
+}
+
+// MyWorker implements Worker interface.
+type MyWorker struct {
+	drain bool
+}
+
+func (w *MyWorker) Work(task TaskFunc) error {
+
+	cancel := make(chan struct{}, 1)
+	errc := make(chan error, 2)
+	go func() {
+		err := task(cancel)
+		errc <- err
+	}()
+
+	select {
+	case <-time.After(time.Second):
+		return errors.New("timeout")
+	case <-cancel:
+		return errors.New("cancelation")
+	case err := <-errc:
+		return err
+	}
+
+	return nil
+}
+
+func (w *MyWorker) Drain() bool {
+	return w.drain
 }
 
 // T type for test.
@@ -20,8 +79,8 @@ type T struct {
 
 // TestTable basic table test
 func TestTable(t *testing.T) {
-	t.Logf("TestTable : start")
-	defer t.Logf("TestTable : return")
+	t.Logf("start table")
+	defer t.Logf("return table")
 
 	var tests = []T{
 		{1, 2, nil, DefaultTimeout},
@@ -32,14 +91,13 @@ func TestTable(t *testing.T) {
 	for _, m := range tests {
 		x := struct{ M T }{m}
 
-		_, err := NewDefault(x.M.Size, x.M.Len, x.M.timeout)
+		_, err := New(x.M.Size, x.M.Len, x.M.timeout)
 		if err == nil && x.M.Expected == nil {
 			continue
 		}
 
 		if err != nil && err.Error() != x.M.Expected.Error() {
-			// t.Logf("TestTable : err [%s] expected [%s]", err, x.M.Expected)
-			t.FailNow()
+			t.Errorf("actual [%s] expected [%s]", err, x.M.Expected)
 			return
 		}
 	}
@@ -48,48 +106,56 @@ func TestTable(t *testing.T) {
 // TestSimple create a new JobQ and make simple tasks until
 // Stop is call.
 func TestSimple(t *testing.T) {
-	t.Logf("TestSimple : start")
-	defer t.Logf("TestSimple : return")
-
-	queue := 5
-
-	jq, err := NewDefault(3, queue, DefaultTimeout)
-	if err != nil {
-		t.FailNow()
-		return
-	}
-
-	c := make(chan int, queue)
 
 	go func() {
-		var count int
-		for i := range c {
-			// t.Logf("TestSimple : count [%v] i [%v]", count, i)
-			count++
-			if count >= queue {
-				_ = i
+		<-time.After(60 * time.Second)
+		panic(errors.New("simple panic"))
+	}()
+
+	queue := 5
+	jq, err := New(3, queue, DefaultTimeout)
+	if err != nil {
+		t.Errorf("err [%s]", err)
+		return
+	}
+	for i := 0; i < 3; i++ {
+		jq.Populate(&MyWorker{false})
+	}
+
+	c := make(chan int)
+
+	go func() {
+		var count int32
+		for _ = range c {
+			atomic.AddInt32(&count, 1)
+
+			x := atomic.LoadInt32(&count)
+			log.Printf("x [%v]", x)
+
+			if x >= 4 {
+				log.Printf("STOP x [%v]", x)
 				jq.Stop()
-				jq.Stop() // make sure calling twice make no
-				// change
-				// t.Logf("TestSimple : Stop at i [%v] count [%v] return", i, count)
+				jq.Stop() // make sure calling twice make no change
 				return
 			}
 		}
 	}()
 
 	go func() {
-		for i := 0; i < queue; i++ {
-			// change m with i and see a racecondition.
-			go func(m int) {
-				err := jq.AddTask(func(cancel chan struct{}) error {
-					// t.Logf("TestSimple : send c [%v]", m)
-					c <- m
-					return nil
-				})
-				if err != nil {
-					// t.Logf("TestSimple : task err [%s]", err)
+		for i := 0; i < queue*10; i++ {
+			x := i
+
+			err := jq.AddTask(func(cancel chan struct{}) error {
+				select {
+				case c <- x:
+				default:
+					cancel <- struct{}{}
 				}
-			}(i)
+				return nil
+			})
+			if err != nil {
+				log.Printf("task err [%s]", err)
+			}
 		}
 	}()
 
@@ -99,64 +165,97 @@ func TestSimple(t *testing.T) {
 // TestPopulate demonstrates that you can keep adding tasks
 // and regrow workers channel without issues.
 func TestPopulate(t *testing.T) {
-	t.Logf("TestPopulate : start")
-	defer t.Logf("TestPopulate : return")
+	t.Logf("populate start")
+	defer t.Logf("populate return")
 
-	jq, err := NewDefault(3, 10, DefaultTimeout)
+	wrs := 4
+	q := 1000
+
+	jq, err := New(wrs, q, DefaultTimeout)
 	if err != nil {
-		t.FailNow()
+		t.Errorf("err [%s]", err)
 		return
 	}
+	for i := 0; i < wrs; i++ {
+		jq.Populate(&MyWorker{false})
+	}
 
-	l := 1500
+	tasks := 15000000
+
+	c := make(chan int)
 
 	go func() {
-		for i := 0; i < l; i++ {
-			goru := runtime.NumGoroutine()
-			t.Logf("TestPopulate : goroutines [%v]", goru)
-			return
+		var count int32
+		for _ = range c {
+			atomic.AddInt32(&count, 1)
+
+			x := atomic.LoadInt32(&count)
+			log.Printf("DONE : X [%v]", x)
+
+			// keep working until 40% of tasks are done.
+			if x >= int32(6000) {
+				log.Printf("stopped in [%v]", x)
+				jq.Stop()
+				jq.Stop()
+				return
+			}
 		}
 	}()
+
 	go func() {
-		for i := 0; i < l; i++ {
-			// t.Logf("TestPopulate : add task")
+		<-time.After(10 * time.Millisecond)
+		log.Printf("begin populate")
+		for i := 0; i < 500; i++ {
+			jq.Populate(&MyWorker{false})
+		}
+	}()
+
+	go func() {
+		for i := 0; i < tasks; i++ {
+			x := i
 			err := jq.AddTask(func(cancel chan struct{}) error {
-				// t.Logf("TestPopulate : task done")
+				select {
+				case c <- x:
+				default:
+					cancel <- struct{}{}
+				}
+
 				return nil
 			})
 			if err != nil {
-				// t.Logf("TestPopulate : add task : err [%s]", err)
+				// 	log.Printf("add task : err [%s]", err)
 			}
 		}
 	}()
 	go func() {
-		<-time.After(50 * time.Millisecond)
-		for i := 0; i < 5; i++ {
-			w := newDefaultWorker(DefaultTimeout)
-			err := jq.Populate(w)
+		for i := 0; i < tasks; i++ {
+			x := i
+			err := jq.AddTask(func(cancel chan struct{}) error {
+				select {
+				case c <- x:
+				default:
+					cancel <- struct{}{}
+				}
+
+				return nil
+			})
 			if err != nil {
-				t.Logf("TestPopulate : Populate : err [%s]", err)
+				// 	log.Printf("add task : err [%s]", err)
 			}
 		}
 	}()
 
-	t.Logf("TestPopulate : before wait time")
-	time.Sleep(1500 * time.Millisecond)
-	t.Logf("TestPopulate : wait time")
-	jq.Stop()
-	t.Logf("TestPopulate : between Stop & Wait")
 	jq.Wait()
 }
 
-// TestMustOK demonstrates Must returns a valid JobQ
-func TestMustOK(t *testing.T) {
-	t.Logf("TestMustOK : start")
-	defer t.Logf("TestMustOK : return")
+// TestMust demonstrates Must returns a valid JobQ
+func TestMust(t *testing.T) {
+	t.Logf("start")
+	defer t.Logf("return")
 
 	defer func() {
 		if err := recover(); err != nil {
-			t.Fail()
-			t.Logf("TestMust : recover err : [%s]", err)
+			t.Errorf("recover : err [%s]", err)
 		}
 	}()
 
@@ -170,14 +269,13 @@ func TestMustOK(t *testing.T) {
 // TestMustFailSize demonstrates panic if worker count is
 // invalid
 func TestMustFailSize(t *testing.T) {
-	t.Logf("TestMustFailSize : start")
-	defer t.Logf("TestMustFailSize : return")
+	t.Logf("start")
+	defer t.Logf("return")
 
 	defer func() {
 		if err := recover(); err != nil {
 			if err != ErrInvalidWorkerSize {
-				t.Fail()
-				t.Logf("TestMust : recover err : [%s]", err)
+				t.Errorf("recover : expected [%s] actual [%s]", ErrInvalidWorkerSize, err)
 			}
 		}
 	}()
@@ -188,14 +286,13 @@ func TestMustFailSize(t *testing.T) {
 // TestMustFailQueue demonstrates panic if queue len is
 // invalid
 func TestMustFailQueue(t *testing.T) {
-	t.Logf("TestMustFailQueue : start")
-	defer t.Logf("TestMustFailQueue : return")
+	t.Logf("start")
+	defer t.Logf("return")
 
 	defer func() {
 		if err := recover(); err != nil {
 			if err != ErrInvalidQueueSize {
-				t.Fail()
-				t.Logf("TestMust : recover err : [%s]", err)
+				t.Errorf("recover : expected [%s] actual [%s]", ErrInvalidQueueSize, err)
 			}
 		}
 	}()
@@ -203,91 +300,28 @@ func TestMustFailQueue(t *testing.T) {
 	Must(1, 0, time.Second)
 }
 
-// TestTimeout demonstrates JobQ can't block when task didn't
-// return
+// TestTimeout demonstrates JobQ can't block when task didn't return
 func TestTimeout(t *testing.T) {
-	t.Logf("TestTimeout : start")
-	defer t.Logf("TestTimeout : return")
+	t.Logf("start")
+	defer t.Logf("return")
 
-	jq, err := NewDefault(1, 1, 100*time.Millisecond)
+	jq, err := New(1, 1, 100*time.Millisecond)
 	if err != nil {
 		t.Fail()
 		return
 	}
+	jq.Populate(&MyWorker{false})
 
 	// task 1
 	if err := jq.AddTask(func(cancel chan struct{}) error {
+		log.Printf("before block")
 		select {}
-		t.Logf("TestTimeout : this log it will no show!")
+		log.Printf("after block")
+		t.Logf("this log it will no show!")
 		return nil
 	}); err != nil {
-		t.Fail()
-		t.Logf("TestCustomWorker : err : [%s]", err)
+		t.Logf("err [%s]", err)
 		return
-	}
-
-	jq.Stop()
-	jq.Wait()
-}
-
-// MyWorker implements Worker interface.
-type MyWorker struct {
-	drain bool
-}
-
-func (w *MyWorker) Do(task TaskFunc) error {
-	return nil
-}
-
-func (w *MyWorker) Drain() bool {
-	return w.drain
-}
-
-// TestCustomWorker makes work with a custom worker.
-func TestCustomWorker(t *testing.T) {
-	t.Logf("TestCustomWorker : start")
-	defer t.Logf("TestCustomWorker : return")
-
-	jq, err := New(2, 2, time.Second)
-	if err != nil {
-		t.Fail()
-		return
-	}
-	// task 1
-	if err := jq.AddTask(func(cancel chan struct{}) error {
-		return nil
-	}); err != ErrWorkersNotFound {
-		t.Fail()
-		t.Logf("TestCustomWorker : err : [%s] expected [%s]", err, ErrWorkersNotFound)
-		return
-	}
-
-	w := &MyWorker{drain: false}
-	err = jq.Populate(w)
-	if err != nil {
-		t.Fail()
-		t.Logf("TestCustomWorker : err : [%s]", err)
-		return
-	}
-
-	// task 2
-	if err := jq.AddTask(func(cancel chan struct{}) error {
-		return nil
-	}); err != nil {
-		t.Fail()
-		t.Logf("TestCustomWorker : err : [%s]", err)
-		return
-	}
-
-	// make worker be drained
-	w.drain = true
-
-	// task 3 will return err not workers found because was
-	// drained.
-	if err := jq.AddTask(func(cancel chan struct{}) error {
-		return nil
-	}); err != nil {
-		t.Logf("TestCustomWorker : err : [%s]", err)
 	}
 
 	jq.Stop()
@@ -295,22 +329,24 @@ func TestCustomWorker(t *testing.T) {
 }
 
 func bench(workers, queue int, b *testing.B) {
-
-	// t.Logf("bench : workers [%v] queue [%v]", workers, queue)
-
-	jq, err := NewDefault(workers, queue, DefaultTimeout)
+	jq, err := New(workers, queue, DefaultTimeout)
 	if err != nil {
+		b.Errorf("err [%s]", err)
 		b.Fail()
 	}
+	for i := 0; i < workers; i++ {
+		jq.Populate(&MyWorker{false})
+	}
 
-	c := make(chan int, queue)
+	jobs := int32(queue)
+	c := make(chan int32, queue)
+
+	var count int32
+
 	go func() {
-		var count int
 		for i := range c {
-			// t.Logf("bench : at [%v]", i)
-			count++
-			if count == queue {
-				// t.Logf("bench : Stop All at [%v]", i)
+			atomic.AddInt32(&count, 1)
+			if atomic.LoadInt32(&count) >= jobs {
 				_ = i
 				jq.Stop()
 			}
@@ -318,13 +354,12 @@ func bench(workers, queue int, b *testing.B) {
 	}()
 
 	b.RunParallel(func(pb *testing.PB) {
-		var ii int
+		var ii int32
 		for pb.Next() {
-			ii++
-			// t.Logf("bench : add")
+			atomic.AddInt32(&ii, 1)
+
 			task := func(cancel chan struct{}) error {
-				// c <- ii
-				// t.Logf("bench : added")
+				c <- atomic.LoadInt32(&ii)
 				return nil
 			}
 			jq.AddTask(task)
