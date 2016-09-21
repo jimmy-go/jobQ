@@ -7,6 +7,8 @@ import (
 	"runtime"
 	"time"
 
+	_ "gopkg.in/jimmy-go/vovo.v0/profiling/defpprof"
+
 	"github.com/jimmy-go/jobq"
 )
 
@@ -19,8 +21,7 @@ var (
 func main() {
 	runtime.GOMAXPROCS(runtime.NumCPU())
 	flag.Parse()
-	// log.SetFlags(log.Lshortfile | log.Lmicroseconds)
-	log.SetFlags(0)
+	log.SetFlags(log.Lshortfile)
 	log.Printf("workers [%d]", *ws)
 	log.Printf("queue len [%d]", *qlen)
 	log.Printf("tasks [%d]", *tasks)
@@ -34,9 +35,12 @@ func main() {
 	// qlen: size for queue length. All left jobs will wait
 	// until queue release some slot.
 	// timeout: timeout for every task
-	jq, err := jobq.NewDefault(*ws, *qlen, time.Duration(1*time.Second))
+	jq, err := jobq.New(*ws, *qlen, time.Duration(1*time.Second))
 	if err != nil {
 		log.Printf("main : err [%s]", err)
+	}
+	for i := 0; i < *ws; i++ {
+		jq.Populate(&MyWorker{})
 	}
 
 	go func() {
@@ -44,7 +48,6 @@ func main() {
 			log.Printf("added all tasks")
 		}()
 		for i := 0; i < *tasks; i++ {
-			log.Printf("add [%v] task", i)
 			go func(index int) {
 				if index == *tasks/2 {
 					log.Printf("stopping queue. index [%v]", index)
@@ -56,6 +59,7 @@ func main() {
 					})
 					if err != nil {
 						log.Printf("AddTask : err [%s]", err)
+						return
 					}
 				}
 
@@ -69,7 +73,10 @@ func main() {
 				err := jq.AddTask(task)
 				if err != nil {
 					log.Printf("AddTask : err [%s]", err)
+					return
 				}
+
+				log.Printf("add [%v] task", index)
 			}(i)
 		}
 	}()
@@ -99,4 +106,35 @@ func goroutines() {
 			log.Printf("main : GOROUTINES [%v]", runtime.NumGoroutine())
 		}
 	}
+}
+
+// MyWorker satisfies jobq.Worker.
+type MyWorker struct{}
+
+// Work func.
+func (d *MyWorker) Work(task jobq.TaskFunc) error {
+	log.Printf("Work : doing work")
+
+	errc := make(chan error, 2)
+	cancel := make(chan struct{}, 2)
+
+	go func() {
+		err := task(cancel)
+		errc <- err
+	}()
+
+	select {
+	case <-time.After(time.Second):
+		cancel <- struct{}{}
+		errc <- errors.New("timeout")
+	case err := <-errc:
+		return err
+	}
+
+	return nil
+}
+
+// Drain func.
+func (d *MyWorker) Drain() bool {
+	return false
 }
