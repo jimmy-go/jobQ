@@ -25,6 +25,7 @@ package jobq
 
 import (
 	"errors"
+	"log"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -58,6 +59,9 @@ var (
 
 	// ErrQuit error returned when Stop method is called.
 	ErrQuit = errors.New("jobq: pool is quitting")
+
+	// ErrAddWorker error returned when Populate fails.
+	ErrAddWorker = errors.New("jobq: can't add worker")
 )
 
 const (
@@ -147,6 +151,8 @@ func (d *JobQ) run() {
 
 			select {
 			case d.workersc <- w:
+			default:
+				log.Printf("run : Can't return worker")
 			}
 		default:
 		}
@@ -159,10 +165,15 @@ func (d *JobQ) run() {
 //
 // Populate method must be used at init time. You can use it
 // at runtime but take in mind that will stop all current tasks.
-func (d *JobQ) Populate(w Worker) {
+func (d *JobQ) Populate(w Worker) error {
 	select {
 	case d.workersc <- w:
+		return nil
+	default:
+		return ErrAddWorker
 	}
+
+	return nil
 }
 
 // AddTask add a task to queue.
