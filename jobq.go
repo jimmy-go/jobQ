@@ -25,7 +25,6 @@ package jobq
 
 import (
 	"errors"
-	"log"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -148,7 +147,6 @@ func (d *JobQ) run() {
 
 			select {
 			case d.workersc <- w:
-				log.Printf("run : after join")
 			}
 		default:
 		}
@@ -162,10 +160,8 @@ func (d *JobQ) run() {
 // Populate method must be used at init time. You can use it
 // at runtime but take in mind that will stop all current tasks.
 func (d *JobQ) Populate(w Worker) {
-	log.Printf("Populate : before join")
 	select {
 	case d.workersc <- w:
-		log.Printf("Populate : after join")
 	}
 }
 
