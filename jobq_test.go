@@ -46,7 +46,7 @@ type MyWorker struct {
 
 func (w *MyWorker) Work(task TaskFunc) error {
 
-	cancel := make(chan struct{}, 2)
+	cancel := make(chan struct{}, 100)
 	errc := make(chan error, 2)
 	go func() {
 		err := task(cancel)
@@ -109,7 +109,7 @@ func TestSimple(t *testing.T) {
 
 	go func() {
 		<-time.After(60 * time.Second)
-		// panic(errors.New("simple panic"))
+		panic(errors.New("simple panic"))
 	}()
 
 	queue := 5
