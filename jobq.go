@@ -146,9 +146,10 @@ func (d *JobQ) run() {
 			default:
 			}
 
-			go func() {
-				d.workersc <- w
-			}()
+			select {
+			case d.workersc <- w:
+				log.Printf("run : after join")
+			}
 		default:
 		}
 	}
@@ -162,12 +163,10 @@ func (d *JobQ) run() {
 // at runtime but take in mind that will stop all current tasks.
 func (d *JobQ) Populate(w Worker) {
 	log.Printf("Populate : before join")
-	go func() {
-		select {
-		case d.workersc <- w:
-			log.Printf("Populate : after join")
-		}
-	}()
+	select {
+	case d.workersc <- w:
+		log.Printf("Populate : after join")
+	}
 }
 
 // AddTask add a task to queue.
