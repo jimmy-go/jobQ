@@ -46,7 +46,7 @@ type MyWorker struct {
 
 func (w *MyWorker) Work(task TaskFunc) error {
 
-	cancel := make(chan struct{}, 1)
+	cancel := make(chan struct{}, 2)
 	errc := make(chan error, 2)
 	go func() {
 		err := task(cancel)
@@ -148,8 +148,10 @@ func TestSimple(t *testing.T) {
 			err := jq.AddTask(func(cancel chan struct{}) error {
 				select {
 				case c <- x:
+					log.Printf("c <- x")
 				default:
 					cancel <- struct{}{}
+					log.Printf("cancel [%v]", x)
 				}
 				return nil
 			})
