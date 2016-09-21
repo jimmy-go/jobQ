@@ -109,7 +109,7 @@ func TestSimple(t *testing.T) {
 
 	go func() {
 		<-time.After(60 * time.Second)
-		panic(errors.New("simple panic"))
+		// panic(errors.New("simple panic"))
 	}()
 
 	queue := 5
