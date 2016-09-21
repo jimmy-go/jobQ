@@ -210,6 +210,7 @@ func TestPopulate(t *testing.T) {
 		for i := 0; i < 500; i++ {
 			jq.Populate(&MyWorker{false})
 		}
+		log.Printf("populate done")
 	}()
 
 	go func() {
