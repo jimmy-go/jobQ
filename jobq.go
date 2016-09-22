@@ -85,8 +85,6 @@ type JobQ struct {
 
 	// status inner status for work execution in run method.
 	status int32
-
-	rw sync.RWMutex
 }
 
 // New returns a new empty JobQ. You need to add workers calling
@@ -103,7 +101,7 @@ func New(workers, queueSize int, timeout time.Duration) (*JobQ, error) {
 	}
 	d := &JobQ{
 		tasksc:   make(chan TaskFunc, queueSize),
-		workersc: make(chan Worker, 1000000),
+		workersc: make(chan Worker, 5000),
 	}
 	d.wg.Add(1)
 
@@ -125,7 +123,6 @@ func (d *JobQ) run() {
 
 	for {
 		state := atomic.LoadInt32(&d.status)
-
 		switch state {
 		case statusExit:
 			return
@@ -152,7 +149,7 @@ func (d *JobQ) run() {
 			select {
 			case d.workersc <- w:
 			default:
-				log.Printf("run : Can't return worker")
+				// log.Printf("run Can't return worker")
 			}
 		default:
 		}
@@ -186,7 +183,6 @@ func (d *JobQ) AddTask(task TaskFunc) error {
 	case d.tasksc <- task:
 		d.wg.Add(1)
 	default:
-		// log.Printf("len [%v] cap [%v]", len(d.tasksc), cap(d.tasksc))
 		return ErrQueueSizeExceeded
 	}
 	return nil
@@ -201,6 +197,7 @@ func (d *JobQ) Stop() {
 	if atomic.LoadInt32(&d.status) != statusStopping {
 		atomic.StoreInt32(&d.status, statusStopping)
 		d.wg.Done()
+		log.Printf("Done")
 	}
 }
 
