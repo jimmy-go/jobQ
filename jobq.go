@@ -25,6 +25,7 @@ package jobq
 
 import (
 	"errors"
+	"log"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -58,6 +59,9 @@ var (
 
 	// ErrQuit error returned when Stop method is called.
 	ErrQuit = errors.New("jobq: pool is quitting")
+
+	// ErrAddWorker error returned when Populate fails.
+	ErrAddWorker = errors.New("jobq: can't add worker")
 )
 
 const (
@@ -81,8 +85,6 @@ type JobQ struct {
 
 	// status inner status for work execution in run method.
 	status int32
-
-	rw sync.RWMutex
 }
 
 // New returns a new empty JobQ. You need to add workers calling
@@ -99,7 +101,7 @@ func New(workers, queueSize int, timeout time.Duration) (*JobQ, error) {
 	}
 	d := &JobQ{
 		tasksc:   make(chan TaskFunc, queueSize),
-		workersc: make(chan Worker),
+		workersc: make(chan Worker, 5000),
 	}
 	d.wg.Add(1)
 
@@ -121,7 +123,6 @@ func (d *JobQ) run() {
 
 	for {
 		state := atomic.LoadInt32(&d.status)
-
 		switch state {
 		case statusExit:
 			return
@@ -145,9 +146,11 @@ func (d *JobQ) run() {
 			default:
 			}
 
-			go func() {
-				d.workersc <- w
-			}()
+			select {
+			case d.workersc <- w:
+			default:
+				// log.Printf("run Can't return worker")
+			}
 		default:
 		}
 	}
@@ -159,10 +162,15 @@ func (d *JobQ) run() {
 //
 // Populate method must be used at init time. You can use it
 // at runtime but take in mind that will stop all current tasks.
-func (d *JobQ) Populate(w Worker) {
-	go func() {
-		d.workersc <- w
-	}()
+func (d *JobQ) Populate(w Worker) error {
+	select {
+	case d.workersc <- w:
+		return nil
+	default:
+		return ErrAddWorker
+	}
+
+	return nil
 }
 
 // AddTask add a task to queue.
@@ -175,7 +183,6 @@ func (d *JobQ) AddTask(task TaskFunc) error {
 	case d.tasksc <- task:
 		d.wg.Add(1)
 	default:
-		// log.Printf("len [%v] cap [%v]", len(d.tasksc), cap(d.tasksc))
 		return ErrQueueSizeExceeded
 	}
 	return nil
@@ -190,6 +197,7 @@ func (d *JobQ) Stop() {
 	if atomic.LoadInt32(&d.status) != statusStopping {
 		atomic.StoreInt32(&d.status, statusStopping)
 		d.wg.Done()
+		log.Printf("Done")
 	}
 }
 
