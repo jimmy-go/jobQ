@@ -46,7 +46,7 @@ type MyWorker struct {
 
 func (w *MyWorker) Work(task TaskFunc) error {
 
-	cancel := make(chan struct{}, 1)
+	cancel := make(chan struct{}, 100)
 	errc := make(chan error, 2)
 	go func() {
 		err := task(cancel)
@@ -109,7 +109,7 @@ func TestSimple(t *testing.T) {
 
 	go func() {
 		<-time.After(60 * time.Second)
-		panic(errors.New("simple panic"))
+		panic("simple panic")
 	}()
 
 	queue := 5
@@ -124,25 +124,26 @@ func TestSimple(t *testing.T) {
 
 	c := make(chan int)
 
+	var exit bool
+
 	go func() {
 		var count int32
 		for _ = range c {
 			atomic.AddInt32(&count, 1)
 
 			x := atomic.LoadInt32(&count)
-			log.Printf("x [%v]", x)
-
+			log.Printf("done xx [%v]", x)
 			if x >= 4 {
-				log.Printf("STOP x [%v]", x)
 				jq.Stop()
 				jq.Stop() // make sure calling twice make no change
+				exit = true
 				return
 			}
 		}
 	}()
 
 	go func() {
-		for i := 0; i < queue*10; i++ {
+		for i := 0; !exit; i++ {
 			x := i
 
 			err := jq.AddTask(func(cancel chan struct{}) error {
@@ -154,7 +155,7 @@ func TestSimple(t *testing.T) {
 				return nil
 			})
 			if err != nil {
-				log.Printf("task err [%s]", err)
+				log.Printf("task err [%s][%v]", err, x)
 			}
 		}
 	}()
@@ -165,9 +166,6 @@ func TestSimple(t *testing.T) {
 // TestPopulate demonstrates that you can keep adding tasks
 // and regrow workers channel without issues.
 func TestPopulate(t *testing.T) {
-	t.Logf("populate start")
-	defer t.Logf("populate return")
-
 	wrs := 4
 	q := 1000
 
@@ -180,9 +178,8 @@ func TestPopulate(t *testing.T) {
 		jq.Populate(&MyWorker{false})
 	}
 
-	tasks := 15000000
-
 	c := make(chan int)
+	var exit bool
 
 	go func() {
 		var count int32
@@ -190,13 +187,14 @@ func TestPopulate(t *testing.T) {
 			atomic.AddInt32(&count, 1)
 
 			x := atomic.LoadInt32(&count)
-			log.Printf("DONE : X [%v]", x)
+			// log.Printf("DONE : X [%v]", x)
 
 			// keep working until 40% of tasks are done.
 			if x >= int32(6000) {
-				log.Printf("stopped in [%v]", x)
+				// log.Printf("stopped in [%v]", x)
 				jq.Stop()
-				jq.Stop()
+				jq.Stop() // make sure calling twice make no change
+				exit = true
 				return
 			}
 		}
@@ -204,14 +202,15 @@ func TestPopulate(t *testing.T) {
 
 	go func() {
 		<-time.After(10 * time.Millisecond)
-		log.Printf("begin populate")
+		// log.Printf("begin populate")
 		for i := 0; i < 500; i++ {
 			jq.Populate(&MyWorker{false})
 		}
+		// log.Printf("populate done")
 	}()
 
 	go func() {
-		for i := 0; i < tasks; i++ {
+		for i := 0; !exit; i++ {
 			x := i
 			err := jq.AddTask(func(cancel chan struct{}) error {
 				select {
@@ -228,7 +227,7 @@ func TestPopulate(t *testing.T) {
 		}
 	}()
 	go func() {
-		for i := 0; i < tasks; i++ {
+		for i := 0; !exit; i++ {
 			x := i
 			err := jq.AddTask(func(cancel chan struct{}) error {
 				select {
@@ -314,7 +313,6 @@ func TestTimeout(t *testing.T) {
 
 	// task 1
 	if err := jq.AddTask(func(cancel chan struct{}) error {
-		log.Printf("before block")
 		select {}
 		log.Printf("after block")
 		t.Logf("this log it will no show!")
@@ -332,13 +330,12 @@ func bench(workers, queue int, b *testing.B) {
 	jq, err := New(workers, queue, DefaultTimeout)
 	if err != nil {
 		b.Errorf("err [%s]", err)
-		b.Fail()
 	}
 	for i := 0; i < workers; i++ {
 		jq.Populate(&MyWorker{false})
 	}
 
-	jobs := int32(queue)
+	jobs := int32(100)
 	c := make(chan int32, queue)
 
 	var count int32
@@ -346,8 +343,9 @@ func bench(workers, queue int, b *testing.B) {
 	go func() {
 		for i := range c {
 			atomic.AddInt32(&count, 1)
+			log.Printf("Bench : i [%v]", i)
+
 			if atomic.LoadInt32(&count) >= jobs {
-				_ = i
 				jq.Stop()
 			}
 		}
