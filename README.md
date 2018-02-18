@@ -1,21 +1,22 @@
-####Job queue in go with support for custom workers.
+## Job queue written in go.
 
 [![License MIT](https://img.shields.io/npm/l/express.svg)](http://opensource.org/licenses/MIT)
-[![Build Status](https://travis-ci.org/jimmy-go/jobQ.svg?branch=master)](https://travis-ci.org/jimmy-go/jobQ)
-[![Go Report Card](https://goreportcard.com/badge/github.com/jimmy-go/jobq?1)](https://goreportcard.com/report/github.com/jimmy-go/jobq)
+[![Build Status](https://travis-ci.org/jimmy-go/jobq.svg?branch=master)](https://travis-ci.org/jimmy-go/jobq)
+[![Go Report Card](https://goreportcard.com/badge/github.com/jimmy-go/jobq)](https://goreportcard.com/report/github.com/jimmy-go/jobq)
 [![GoDoc](http://godoc.org/github.com/jimmy-go/jobq?status.png)](http://godoc.org/github.com/jimmy-go/jobq)
-[![Coverage Status](https://coveralls.io/repos/github/jimmy-go/jobQ/badge.svg?branch=master&1)](https://coveralls.io/github/jimmy-go/jobQ?branch=master)
+[![Coverage Status](https://coveralls.io/repos/github/jimmy-go/jobq/badge.svg?branch=master&1)](https://coveralls.io/github/jimmy-go/jobq?branch=master)
 
-#####Install:
+### Install:
+
 ```
-go get gopkg.in/jimmy-go/jobq.v2
+go get gopkg.in/jimmy-go/jobq.v3
 ```
 
-#####Usage:
+### Usage:
 
 Declare a new worker pool:
 
-```go
+```
 // ws: workers size count.
 // qlen: size for queue length. All left jobs will wait until queue release some slot.
 // timeout: timeout for tasks.
@@ -34,18 +35,11 @@ jq.Stop()
 jq.Wait()
 ```
 
-#####Benchmark:
-```
-```
-
-#####Old version:
-`go get gopkg.in/jimmy-go/jobq.v1`
-
-#####License:
+### License:
 
 The MIT License (MIT)
 
-Copyright (c) 2016 Angel Del Castillo
+Copyright (c) 2016 Angel del Castillo
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
